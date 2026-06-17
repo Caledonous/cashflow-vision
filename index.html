@@ -18,8 +18,10 @@
   <!-- react-is : peer dependency obligatoire de Recharts 2.x. Sans ce script, Recharts charge mais
        les composants ne rendent rien (échec silencieux). Source : npm officielle de recharts. -->
   <script crossorigin src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js"></script>
-  <!-- Recharts : bundle UMD minifié, version épinglée. À CHARGER APRÈS react-is. -->
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js"></script>
+  <!-- Recharts : on garde le bundle UMD NON-minifié (Recharts.js, pas .min.js).
+       Bug UMD connu (recharts/recharts#1498) : le build .min.js n'attache pas toujours window.Recharts.
+       Le build dev Recharts.js est fiable et c'est celui du setup d'origine. À CHARGER APRÈS react-is. -->
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
   <!-- Supabase JS v2 : bundle UMD officiel, version épinglée et chemin explicite -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 
