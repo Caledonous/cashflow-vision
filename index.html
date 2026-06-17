@@ -1,0 +1,3616 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CashFlow Vision</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    
+    @keyframes pulse-amber {
+      0%, 100% { box-shadow: 0 0 0 0px rgba(245, 158, 11, 0.7); }
+      50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
+    }
+    .sim-active { animation: pulse-amber 2s infinite; }
+    
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes zoomIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    .animate-in { animation: fadeIn 0.2s ease-out forwards; }
+    .animate-zoom { animation: zoomIn 0.2s ease-out forwards; }
+
+    /* Category color dots */
+    .cat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 overflow-hidden">
+  
+  <div id="root" class="h-screen flex items-center justify-center flex-col gap-4 text-slate-500">
+    <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+    <div>Chargement...</div>
+  </div>
+
+  <script>
+    // Capture les erreurs JS globales pour affichage clair au lieu d'un blocage silencieux
+    window.__cfvErrors = [];
+    window.addEventListener('error', function(e) {
+      window.__cfvErrors.push((e.message || 'Erreur inconnue') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''));
+    });
+
+    // Watchdog : si l'app React ne s'est pas montée après 8s, afficher un diagnostic
+    setTimeout(function() {
+      var root = document.getElementById('root');
+      if (root && root.querySelector('.animate-spin')) {
+        var errList = window.__cfvErrors.length > 0 
+          ? '<ul style="text-align:left;font-size:11px;color:#dc2626;margin-top:12px;max-width:480px;">' + 
+            window.__cfvErrors.map(function(e){ return '<li>' + e + '</li>'; }).join('') + '</ul>'
+          : '<p style="font-size:12px;color:#94a3b8;margin-top:8px;">Aucune erreur JS détectée — le souci vient peut-être d\'une ressource externe (CDN) qui ne charge pas.</p>';
+        root.innerHTML = 
+          '<div style="max-width:520px;text-align:center;padding:20px;">' +
+          '<div style="font-size:32px;margin-bottom:12px;">⚠️</div>' +
+          '<div style="font-weight:bold;color:#1e293b;margin-bottom:8px;">Le chargement prend trop de temps</div>' +
+          '<div style="font-size:13px;color:#64748b;">Une ressource (React, Recharts, ou Tailwind) n\'a peut-être pas chargé correctement.</div>' +
+          errList +
+          '<button onclick="location.reload()" style="margin-top:16px;background:#2563eb;color:white;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;">Recharger la page</button>' +
+          '<div style="margin-top:12px;font-size:11px;color:#cbd5e1;">Si le problème persiste, essaie en navigation privée ou un autre navigateur.</div>' +
+          '</div>';
+      }
+    }, 8000);
+  </script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+    /* ============================================================
+       CONFIGURATION SUPABASE
+       ============================================================ */
+    const SUPABASE_URL = 'https://kihfsxyfwbttxbeqrcif.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_q6vWkRVqHX4WInLcYPyKjw_ZqsQLq2F';
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    
+    const RechartsLib = window.Recharts || null;
+    const { 
+      AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+      PieChart, Pie, Cell, Legend, BarChart, Bar
+    } = RechartsLib || {};
+
+    /* ============================================================
+       ICONES SVG
+       ============================================================ */
+    const IconBase = ({ size = 20, className = "", children, ...props }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+    );
+    const Plus = (p) => <IconBase {...p}><path d="M5 12h14"/><path d="M12 5v14"/></IconBase>;
+    const Settings = (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>;
+    const TrendingUp = (p) => <IconBase {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></IconBase>;
+    const TrendingDown = (p) => <IconBase {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></IconBase>;
+    const ChevronRight = (p) => <IconBase {...p}><path d="m9 18 6-6-6-6"/></IconBase>;
+    const ChevronDown = (p) => <IconBase {...p}><path d="m6 9 6 6 6-6"/></IconBase>;
+    const ChevronUp = (p) => <IconBase {...p}><path d="m18 15-6-6-6 6"/></IconBase>;
+    const X = (p) => <IconBase {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></IconBase>;
+    const Calendar = (p) => <IconBase {...p}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></IconBase>;
+    const Repeat = (p) => <IconBase {...p}><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></IconBase>;
+    const Clock = (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></IconBase>;
+    const CreditCard = (p) => <IconBase {...p}><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></IconBase>;
+    const Save = (p) => <IconBase {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></IconBase>;
+    const Trash2 = (p) => <IconBase {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></IconBase>;
+    const AlertTriangle = (p) => <IconBase {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></IconBase>;
+    const Loader2 = (p) => <IconBase {...p} className={`${p.className || ''} animate-spin`}><path d="M21 12a9 9 0 1 1-6.219-2.87"/></IconBase>;
+    const Download = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></IconBase>;
+    const Upload = (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></IconBase>;
+    const Search = (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/></IconBase>;
+    const PiggyBank = (p) => <IconBase {...p}><path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2h0V5z"/></IconBase>;
+    const FlaskConical = (p) => <IconBase {...p}><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><line x1="8.5" x2="15.5" y1="2" y2="2"/></IconBase>;
+    const PowerOff = (p) => <IconBase {...p}><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" x2="12" y1="2" y2="12"/></IconBase>;
+    const Edit2 = (p) => <IconBase {...p}><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></IconBase>;
+    const Cloud = (p) => <IconBase {...p}><path d="M17.5 19c0-3.037-2.463-5.5-5.5-5.5S6.5 15.963 6.5 19"/><path d="M17.5 19h.5a4 4 0 0 0 3-4.5 3.5 3.5 0 0 0-3-3.25"/></IconBase>;
+    const CloudOff = (p) => <IconBase {...p}><path d="m2 2 20 20"/><path d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"/></IconBase>;
+    const HardDrive = (p) => <IconBase {...p}><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></IconBase>;
+    const Check = (p) => <IconBase {...p}><polyline points="20 6 9 17 4 12"/></IconBase>;
+    const Coins = (p) => <IconBase {...p}><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/></IconBase>;
+    const CalendarCheck = (p) => <IconBase {...p}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/><path d="m9 16 2 2 4-4"/></IconBase>;
+    const History = (p) => <IconBase {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></IconBase>;
+    const List = (p) => <IconBase {...p}><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></IconBase>;
+    const PieChartIcon = (p) => <IconBase {...p}><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></IconBase>;
+    const BarChartIcon = (p) => <IconBase {...p}><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></IconBase>;
+    const Tag = (p) => <IconBase {...p}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" x2="7.01" y1="7" y2="7"/></IconBase>;
+    const ZoomIn = (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></IconBase>;
+    const ZoomOut = (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" x2="14" y1="11" y2="11"/></IconBase>;
+    const RotateCcw = (p) => <IconBase {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></IconBase>;
+    const Info = (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></IconBase>;
+    const Wand = (p) => <IconBase {...p}><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></IconBase>;
+
+    /* ============================================================
+       CONSTANTES MÉTIER
+       ============================================================ */
+    const OperationType = { INCOME: 'INCOME', EXPENSE: 'EXPENSE' };
+    const Frequency = { ONCE: 'ONCE', MONTHLY: 'MONTHLY', QUARTERLY: 'QUARTERLY', ANNUAL: 'ANNUAL' };
+    const RATE_EUR_XPF = 119.33174;
+
+    // Taxonomie de catégories - chacune avec une couleur cohérente
+    const CATEGORIES = {
+      LOGEMENT:   { id: 'LOGEMENT',   label: 'Logement',    color: '#2563eb', icon: '🏠' },
+      ALIMENTATION: { id: 'ALIMENTATION', label: 'Alimentation', color: '#16a34a', icon: '🍞' },
+      TRANSPORT:  { id: 'TRANSPORT',  label: 'Transport',   color: '#f59e0b', icon: '🚗' },
+      LOISIRS:    { id: 'LOISIRS',    label: 'Loisirs',     color: '#ec4899', icon: '🎮' },
+      FAMILLE:    { id: 'FAMILLE',    label: 'Famille',     color: '#8b5cf6', icon: '👨‍👩‍👧' },
+      EPARGNE:    { id: 'EPARGNE',    label: 'Épargne',     color: '#0891b2', icon: '🐷' },
+      CREDITS:    { id: 'CREDITS',    label: 'Crédits',     color: '#dc2626', icon: '💳' },
+      IMPOTS:     { id: 'IMPOTS',     label: 'Impôts',      color: '#7c2d12', icon: '🏛️' },
+      SALAIRE:    { id: 'SALAIRE',    label: 'Salaire',     color: '#059669', icon: '💼' },
+      VACANCES:   { id: 'VACANCES',   label: 'Vacances',    color: '#06b6d4', icon: '🏖️' },
+      AUTRE:      { id: 'AUTRE',      label: 'Autre',       color: '#64748b', icon: '📦' }
+    };
+
+    const CATEGORY_LIST = Object.values(CATEGORIES);
+    const DEFAULT_CATEGORY = 'AUTRE';
+
+    /* ============================================================
+       AUTO-CATÉGORISATION
+       Règles basées sur les mots-clés des libellés.
+       Ordre = priorité (la première règle qui matche gagne).
+       ============================================================ */
+    const AUTO_CAT_RULES = [
+      // Salaires & revenus
+      { match: /salaire|augmentation/i, cat: 'SALAIRE' },
+      { match: /r[ée]duction|remboursement/i, cat: 'SALAIRE' },
+      // Impôts
+      { match: /imp[oô]ts?|taxe|surplus imp/i, cat: 'IMPOTS' },
+      // Crédits & frais bancaires
+      { match: /cr[ée]dit|emprunt|pr[eê]t/i, cat: 'CREDITS' },
+      { match: /frais bancaire|agios/i, cat: 'CREDITS' },
+      // Logement
+      { match: /loyer|sci|charges?\s*\(|eau|elec|électricit|gaz|assurance appart|d[ée]m[ée]nag/i, cat: 'LOGEMENT' },
+      { match: /compte joint/i, cat: 'LOGEMENT' },
+      // Transport
+      { match: /essence|carburant|voiture|auto|assurance voiture|entretien.*voiture|p[ée]age|parking/i, cat: 'TRANSPORT' },
+      { match: /permis/i, cat: 'TRANSPORT' },
+      // Alimentation
+      { match: /bouffe|repas|courses|nourriture|alim|march[ée]/i, cat: 'ALIMENTATION' },
+      // Vacances & voyages
+      { match: /vacances?|voyage|billet|thaïlande|thailande|wallis|ouv[ée]a|po[ée]/i, cat: 'VACANCES' },
+      { match: /we\s|week.?end|semaine amoureux/i, cat: 'VACANCES' },
+      // Famille (enfants, pension, ado)
+      { match: /k[ée]ziah|pension aliment|enfant|lyc[ée]e|[ée]tudes|fac|installation|18 ans|argent.*k[ée]z/i, cat: 'FAMILLE' },
+      { match: /mutuelle/i, cat: 'FAMILLE' },
+      // Épargne
+      { match: /pel|[ée]pargne|cagnotte/i, cat: 'EPARGNE' },
+      // Loisirs & abonnements
+      { match: /abonnement|protonmail|spotify|netflix|portable|t[ée]l[ée]phone|esth[ée]tic|coif|sport/i, cat: 'LOISIRS' },
+      { match: /argent.*poche|argent.*justin|cadeau|kdo|no[eë]l|anniversaire/i, cat: 'LOISIRS' },
+      { match: /unicef|don/i, cat: 'AUTRE' },
+      { match: /sant[ée]/i, cat: 'FAMILLE' }
+    ];
+
+    const autoCategorize = (label) => {
+      if (!label) return DEFAULT_CATEGORY;
+      for (const rule of AUTO_CAT_RULES) {
+        if (rule.match.test(label)) return rule.cat;
+      }
+      return DEFAULT_CATEGORY;
+    };
+
+    /* ============================================================
+       UTILS DATE & FORMAT
+       ============================================================ */
+    const formatCurrency = (amount, currency = 'EUR') => {
+      return new Intl.NumberFormat('fr-FR', { 
+        style: 'currency', 
+        currency: currency === 'EUR' ? 'EUR' : 'XPF', 
+        minimumFractionDigits: 0, 
+        maximumFractionDigits: 0 
+      }).format(amount).replace('XPF', 'F');
+    };
+
+    const generateMonthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const addMonths = (date, months) => { const d = new Date(date); d.setMonth(d.getMonth() + months); return d; };
+    const parseDateLocal = (dateStr) => { const [y, m, d] = dateStr.split('-').map(Number); return new Date(y, m - 1, d); };
+    const formatRelativeTime = (ts) => {
+      if (!ts) return 'jamais';
+      const diff = Date.now() - ts;
+      const sec = Math.floor(diff / 1000);
+      if (sec < 60) return 'à l\'instant';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `il y a ${min} min`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `il y a ${h}h`;
+      const d = Math.floor(h / 24);
+      return `il y a ${d}j`;
+    };
+
+    const isTechnicalOperation = (op) => {
+      const technicalPrefixes = ['Ajustement:', 'Annulé:', 'Clôture:', 'Déduction', 'Réalisé:', '✅', 'Acompte:'];
+      return technicalPrefixes.some(prefix => op.label.startsWith(prefix));
+    };
+
+    /* ============================================================
+       CALCUL DU FORECAST (logique préservée de V1)
+       ============================================================ */
+    const calculateForecast = (initialBalance, operations, adjustments, savingsAccounts = [], savingsAdjustments = {}) => {
+      const forecast = [];
+      let currentBalance = initialBalance;
+      let currentDate = new Date();
+      currentDate.setDate(1); 
+      
+      const MONTHS_TO_FORECAST = 120;
+
+      // État courant de chaque poche d'épargne (clé = id)
+      const accountBalances = {};
+      savingsAccounts.forEach(acc => {
+        accountBalances[acc.id] = acc.balance || 0;
+      });
+
+      // Helper : la poche est-elle active ce mois (entre startDate et endDate) ?
+      const isAccountActive = (acc, monthKey) => {
+        if (!acc.startDate) return true; // si pas de date début, toujours active
+        try {
+          const accStart = parseDateLocal(acc.startDate);
+          const accEnd = acc.endDate ? parseDateLocal(acc.endDate) : null;
+          const startYM = generateMonthKey(accStart);
+          const endYM = accEnd ? generateMonthKey(accEnd) : null;
+          if (monthKey < startYM) return false;
+          if (endYM && monthKey > endYM) return false;
+          return true;
+        } catch (e) { return false; }
+      };
+
+      for (let i = 0; i < MONTHS_TO_FORECAST; i++) {
+        const monthKey = generateMonthKey(currentDate);
+        let income = 0;
+        let expense = 0;
+        const activeOps = [];
+
+        operations.forEach(op => {
+          let isActive = false;
+          const opDate = op.date ? parseDateLocal(op.date) : null;
+          const opStart = op.startDate ? parseDateLocal(op.startDate) : null;
+          const opEnd = op.endDate ? parseDateLocal(op.endDate) : null;
+
+          if (op.frequency === Frequency.ONCE && opDate) {
+            if (opDate.getMonth() === currentDate.getMonth() && opDate.getFullYear() === currentDate.getFullYear()) isActive = true;
+          } else if (op.frequency !== Frequency.ONCE && opStart) {
+            const currentYM = generateMonthKey(currentDate);
+            const startYM = generateMonthKey(opStart);
+            const endYM = opEnd ? generateMonthKey(opEnd) : null;
+
+            if (currentYM >= startYM && (!endYM || currentYM <= endYM)) {
+              const diffYear = currentDate.getFullYear() - opStart.getFullYear();
+              const diffMonth = currentDate.getMonth() - opStart.getMonth();
+              const totalMonthsDiff = (diffYear * 12) + diffMonth;
+              if (op.frequency === Frequency.MONTHLY) isActive = true;
+              else if (op.frequency === Frequency.QUARTERLY) isActive = (totalMonthsDiff % 3 === 0);
+              else if (op.frequency === Frequency.ANNUAL) isActive = (totalMonthsDiff % 12 === 0);
+            }
+          }
+
+          if (isActive) {
+            activeOps.push(op);
+            if (op.type === OperationType.INCOME) income += op.amount;
+            else expense += op.amount;
+          }
+        });
+
+        // === VERSEMENTS POCHES D'ÉPARGNE (ajoutés aux dépenses du compte courant) ===
+        let totalSavingsDeposit = 0;
+        const accountsActivity = []; // détail pour le modal
+        savingsAccounts.forEach(acc => {
+          if (!isAccountActive(acc, monthKey)) return;
+          const deposit = acc.monthlyDeposit || 0;
+          totalSavingsDeposit += deposit;
+          
+          // Capitalisation (intérêts composés mensuels) - APPLIQUÉ avant ajout du versement
+          const monthlyRate = ((acc.annualRate || 0) / 100) / 12;
+          const interestEarned = accountBalances[acc.id] * monthlyRate;
+          accountBalances[acc.id] = accountBalances[acc.id] * (1 + monthlyRate) + deposit;
+          
+          accountsActivity.push({
+            id: acc.id,
+            name: acc.name,
+            type: acc.type,
+            deposit,
+            interest: interestEarned,
+            newBalance: accountBalances[acc.id]
+          });
+        });
+
+        expense += totalSavingsDeposit;
+        if (totalSavingsDeposit > 0) {
+          // Ajouter une "opération virtuelle" pour visibilité dans le détail
+          activeOps.push({
+            id: '__savings_deposit_' + monthKey,
+            label: `💰 Versement épargne (auto)`,
+            amount: totalSavingsDeposit,
+            type: OperationType.EXPENSE,
+            frequency: Frequency.MONTHLY,
+            category: 'EPARGNE',
+            tags: [],
+            isVirtual: true
+          });
+        }
+
+        // === AJUSTEMENT MANUEL DU CAPITAL ÉPARGNÉ ===
+        // savingsAdjustments[monthKey] = { accId: newValue }
+        const monthSavingsAdj = savingsAdjustments[monthKey];
+        if (monthSavingsAdj) {
+          Object.entries(monthSavingsAdj).forEach(([accId, val]) => {
+            if (accountBalances[accId] !== undefined) {
+              accountBalances[accId] = val;
+            }
+          });
+        }
+
+        // Total capital épargné ce mois
+        const totalSavingsCapital = Object.values(accountBalances).reduce((s, v) => s + v, 0);
+        
+        const events = [];
+        operations.forEach(op => {
+          if (isTechnicalOperation(op)) return;
+          const opStartYM = op.startDate ? op.startDate.substring(0, 7) : null;
+          const opEndYM = op.endDate ? op.endDate.substring(0, 7) : null;
+          if (op.frequency !== Frequency.ONCE && opStartYM === monthKey) events.push({ label: `Début ${op.label}`, type: 'START', op: op });
+          if (op.frequency !== Frequency.ONCE && opEndYM === monthKey) events.push({ label: `Fin ${op.label}`, type: 'END', op: op });
+          if (op.frequency === Frequency.ONCE) {
+            const opDate = op.date ? parseDateLocal(op.date) : null;
+            if (opDate && opDate.getMonth() === currentDate.getMonth() && opDate.getFullYear() === currentDate.getFullYear()) {
+              events.push({ label: op.label, type: 'ONCE', op: op });
+            }
+          }
+          if (op.frequency !== Frequency.ONCE) {
+            const opStart = op.startDate ? parseDateLocal(op.startDate) : null;
+            const opEnd = op.endDate ? parseDateLocal(op.endDate) : null;
+            if (opStart) {
+              const diffYear = currentDate.getFullYear() - opStart.getFullYear();
+              const diffMonth = currentDate.getMonth() - opStart.getMonth();
+              const totalMonthsDiff = (diffYear * 12) + diffMonth;
+              const currentYM = generateMonthKey(currentDate);
+              const startYM = generateMonthKey(opStart);
+              const endYM = opEnd ? generateMonthKey(opEnd) : null;
+              if (currentYM >= startYM && (!endYM || currentYM <= endYM)) {
+                if (op.frequency === Frequency.QUARTERLY && totalMonthsDiff % 3 === 0) events.push({ label: op.label, type: 'OCCURRENCE', op: op });
+                else if (op.frequency === Frequency.ANNUAL && totalMonthsDiff % 12 === 0) events.push({ label: op.label, type: 'OCCURRENCE', op: op });
+              }
+            }
+          }
+        });
+
+        const theoreticalEnd = currentBalance + income - expense;
+        const adjustment = adjustments[monthKey];
+        const hasAdjustment = adjustment !== undefined;
+        const finalEnd = hasAdjustment ? adjustment : theoreticalEnd;
+
+        forecast.push({
+          monthKey,
+          label: new Intl.DateTimeFormat('fr-FR', { month: 'short', year: '2-digit' }).format(currentDate),
+          startBalance: currentBalance,
+          totalIncome: income,
+          totalExpense: expense,
+          theoreticalEndBalance: theoreticalEnd,
+          adjustedEndBalance: hasAdjustment ? adjustment : null,
+          finalEndBalance: finalEnd,
+          // === Nouvelles propriétés liées à l'épargne ===
+          savingsDeposit: totalSavingsDeposit,
+          savingsCapital: totalSavingsCapital,
+          patrimoine: finalEnd + totalSavingsCapital,
+          accountsActivity: accountsActivity,
+          accountSnapshot: { ...accountBalances },
+          // ===========
+          events: events,
+          activeOperations: activeOps, 
+          safeMargin: 0 
+        });
+        currentBalance = finalEnd;
+        currentDate = addMonths(currentDate, 1);
+      }
+
+      let futureMin = Infinity;
+      for (let i = forecast.length - 1; i >= 0; i--) {
+        futureMin = Math.min(futureMin, forecast[i].finalEndBalance);
+        forecast[i].safeMargin = futureMin;
+      }
+
+      return forecast;
+    };
+
+    /* ============================================================
+       IMPORT / MIGRATION DEPUIS L'ANCIEN FORMAT
+       Accepte :
+         - V2 (nouveau format avec opérations + catégories + tags directs)
+         - V1 (avec "scenarios" : on prend le currentScenarioId ou le premier)
+         - JSON brut avec "operations" à la racine
+       ============================================================ */
+    const migrateImportedData = (raw) => {
+      let ops = [];
+      let bal = 0;
+      let adj = {};
+
+      // Format V2 direct
+      if (raw.operations && !raw.scenarios) {
+        ops = raw.operations;
+        bal = raw.startingBalance || 0;
+        adj = raw.adjustments || {};
+      }
+      // Format V1 avec scenarios : on prend le scénario actif
+      else if (raw.scenarios) {
+        const targetId = raw.currentScenarioId || Object.keys(raw.scenarios)[0];
+        const scen = raw.scenarios[targetId];
+        if (scen) {
+          ops = scen.operations || [];
+          bal = scen.startingBalance || 0;
+          adj = scen.adjustments || {};
+        }
+      }
+
+      // S'assurer que chaque opération a category et tags
+      ops = ops.map(op => ({
+        ...op,
+        category: op.category || autoCategorize(op.label),
+        tags: op.tags || []
+      }));
+
+      return { operations: ops, startingBalance: bal, adjustments: adj };
+    };
+
+    /* ============================================================
+       MODAL DE CONFIRMATION (remplace confirm() natif)
+       ============================================================ */
+    const ConfirmModal = ({ title, message, onConfirm, onCancel, confirmText = 'Confirmer', danger = false }) => {
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[80] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-zoom">
+            <div className="p-5 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                {danger ? <AlertTriangle size={18} className="text-rose-500"/> : <Info size={18} className="text-blue-500"/>}
+                {title}
+              </h3>
+            </div>
+            <div className="p-5 text-sm text-slate-600">{message}</div>
+            <div className="p-4 bg-slate-50 flex gap-2 justify-end">
+              <button onClick={onCancel} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler</button>
+              <button 
+                onClick={onConfirm} 
+                className={`px-4 py-2 text-sm text-white rounded-lg ${danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       MODAL DE SAISIE TEXTE (remplace prompt() natif)
+       ============================================================ */
+    const PromptModal = ({ title, message, defaultValue = '', onConfirm, onCancel, confirmText = 'OK' }) => {
+      const [value, setValue] = useState(defaultValue);
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[80] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-zoom">
+            <div className="p-5 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800">{title}</h3>
+            </div>
+            <div className="p-5">
+              {message && <p className="text-sm text-slate-600 mb-3">{message}</p>}
+              <input
+                autoFocus
+                type="text"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(value); if (e.key === 'Escape') onCancel(); }}
+                className="w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="p-4 bg-slate-50 flex gap-2 justify-end">
+              <button onClick={onCancel} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler</button>
+              <button onClick={() => onConfirm(value)} className="px-4 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg">{confirmText}</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       TOAST NOTIFICATIONS
+       ============================================================ */
+    const Toast = ({ msg, type, onClose }) => {
+      useEffect(() => {
+        const t = setTimeout(onClose, 3500);
+        return () => clearTimeout(t);
+      }, [onClose]);
+      const bgColor = type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-rose-600' : 'bg-slate-800';
+      return (
+        <div className={`fixed top-4 right-4 z-[90] px-4 py-3 rounded-lg shadow-lg text-white text-sm flex items-center gap-2 animate-in ${bgColor} max-w-xs`}>
+          {type === 'success' && <Check size={16}/>}
+          {type === 'error' && <AlertTriangle size={16}/>}
+          {type === 'info' && <Info size={16}/>}
+          <span>{msg}</span>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       CHIP DE CATÉGORIE
+       ============================================================ */
+    const CategoryChip = ({ catId, size = 'sm' }) => {
+      const cat = CATEGORIES[catId] || CATEGORIES.AUTRE;
+      const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-0.5';
+      return (
+        <span 
+          className={`inline-flex items-center gap-1 ${cls} rounded-full font-medium`}
+          style={{ backgroundColor: cat.color + '20', color: cat.color }}
+        >
+          <span className="cat-dot" style={{ backgroundColor: cat.color }}></span>
+          {cat.label}
+        </span>
+      );
+    };
+
+    /* ============================================================
+       FORMULAIRE D'OPÉRATION (avec catégorie + tags)
+       ============================================================ */
+    const OperationForm = ({ initialData, onSave, onDelete, onDuplicate, onClose, currency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const toView = (v) => v * rate;
+      const fromView = (v) => v / rate;
+
+      const [label, setLabel] = useState(initialData?.label || '');
+      const [amount, setAmount] = useState(initialData ? Math.round(toView(initialData.amount)) : '');
+      const [type, setType] = useState(initialData?.type || OperationType.EXPENSE);
+      const [frequency, setFrequency] = useState(initialData?.frequency || Frequency.MONTHLY);
+      const [date, setDate] = useState(initialData?.date || new Date().toISOString().slice(0, 10));
+      const [startDate, setStartDate] = useState(initialData?.startDate || new Date().toISOString().slice(0, 10));
+      const [endDate, setEndDate] = useState(initialData?.endDate || '');
+      const [category, setCategory] = useState(initialData?.category || DEFAULT_CATEGORY);
+      const [tagsInput, setTagsInput] = useState(initialData?.tags?.join(', ') || '');
+
+      // Auto-suggest catégorie quand le label change (uniquement à la création)
+      useEffect(() => {
+        if (!initialData && label.length > 2) {
+          const suggested = autoCategorize(label);
+          if (suggested !== DEFAULT_CATEGORY) setCategory(suggested);
+        }
+      }, [label, initialData]);
+
+      const handleSubmit = () => {
+        if (!label.trim() || !amount) return;
+        const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
+        const op = {
+          id: initialData?.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 9)),
+          label: label.trim(),
+          amount: fromView(parseFloat(amount)),
+          type,
+          frequency,
+          category,
+          tags
+        };
+        if (frequency === Frequency.ONCE) {
+          op.date = date;
+        } else {
+          op.startDate = startDate;
+          if (endDate) op.endDate = endDate;
+        }
+        onSave(op);
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-zoom">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <h3 className="font-bold text-slate-800">{initialData ? 'Modifier' : 'Nouvelle opération'}</h3>
+              <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"><X size={20}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Libellé</label>
+                <input autoFocus type="text" value={label} onChange={(e) => setLabel(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" placeholder="Ex: Salaire, Loyer..." />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Montant ({currency})</label>
+                  <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Type</label>
+                  <select value={type} onChange={(e) => setType(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1 bg-white">
+                    <option value={OperationType.EXPENSE}>Dépense</option>
+                    <option value={OperationType.INCOME}>Revenu</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Catégorie</label>
+                <div className="grid grid-cols-3 gap-1.5 mt-1">
+                  {CATEGORY_LIST.map(cat => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setCategory(cat.id)}
+                      className={`p-2 rounded-lg text-xs font-medium flex items-center gap-1 justify-center border transition-all ${category === cat.id ? 'shadow-md scale-105 ring-2 ring-offset-1' : 'bg-slate-50 border-slate-200 hover:bg-white'}`}
+                      style={category === cat.id ? { backgroundColor: cat.color + '20', borderColor: cat.color, color: cat.color, '--tw-ring-color': cat.color } : {}}
+                    >
+                      <span>{cat.icon}</span> {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase flex items-center gap-1"><Tag size={10}/> Tags (séparés par virgule)</label>
+                <input type="text" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" placeholder="ex: 2027, voyage, kez" />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Fréquence</label>
+                <select value={frequency} onChange={(e) => setFrequency(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1 bg-white">
+                  <option value={Frequency.MONTHLY}>Mensuel</option>
+                  <option value={Frequency.QUARTERLY}>Trimestriel</option>
+                  <option value={Frequency.ANNUAL}>Annuel</option>
+                  <option value={Frequency.ONCE}>Ponctuel</option>
+                </select>
+              </div>
+
+              {frequency === Frequency.ONCE ? (
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Date</label>
+                  <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 uppercase">Début</label>
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 uppercase">Fin (optionnel)</label>
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-2 shrink-0 flex-wrap">
+              {initialData && <button onClick={() => onDelete(initialData.id)} className="px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-1"><Trash2 size={14}/> Supprimer</button>}
+              {initialData && onDuplicate && <button onClick={() => onDuplicate(initialData)} className="px-3 py-2 text-sm text-purple-600 hover:bg-purple-50 rounded-lg flex items-center gap-1"><Plus size={14}/> Dupliquer</button>}
+              <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler</button>
+              <button onClick={handleSubmit} className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-medium">Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       GRAPHIQUE PRINCIPAL : SOLDE PRÉVISIONNEL
+       ============================================================ */
+    const ForecastChart = ({ data, isSimulation, currency }) => {
+      const [showAll, setShowAll] = useState(false);
+      if (!RechartsLib) return <div className="p-4 text-red-600 border border-red-200 bg-red-50 rounded-lg">Erreur chargement graph</div>;
+      const visibleData = showAll ? data : data.slice(0, 24);
+      return (
+        <div className={`h-[280px] md:h-[340px] w-full bg-white p-2 md:p-4 rounded-xl border shadow-sm flex flex-col shrink-0 ${isSimulation ? 'border-amber-300 shadow-amber-100' : 'border-slate-200'}`}>
+          <div className="flex justify-between items-center mb-2">
+            <h3 className={`text-xs md:text-sm font-semibold uppercase tracking-wider ${isSimulation ? 'text-amber-600' : 'text-slate-500'}`}>
+              {isSimulation ? "Projection (Simulation)" : `Projection (${showAll ? '10 ans' : '2 ans'})`}
+            </h3>
+            <button onClick={() => setShowAll(!showAll)} className="text-[10px] flex items-center gap-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded border border-slate-200 text-slate-600">
+              {showAll ? <ZoomIn size={12}/> : <ZoomOut size={12}/>}
+              {showAll ? 'Réduire' : 'Voir 10 ans'}
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={visibleData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={isSimulation ? "#f59e0b" : "#3b82f6"} stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor={isSimulation ? "#f59e0b" : "#3b82f6"} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="label" tick={{fontSize: 10}} tickMargin={5} stroke="#94a3b8" minTickGap={30} />
+                <YAxis tick={{fontSize: 10}} stroke="#94a3b8" tickFormatter={(value) => currency === 'EUR' ? `${(value / 1000).toFixed(0)}k€` : `${(value / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(value) => [formatCurrency(value, currency), "Solde"]} contentStyle={{ borderRadius: '8px', border: 'none', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}/>
+                <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
+                <Area type="monotone" dataKey="finalEndBalance" stroke={isSimulation ? "#f59e0b" : "#3b82f6"} fillOpacity={1} fill="url(#colorBalance)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       CAMEMBERT : DÉPENSES PAR CATÉGORIE (mois courant)
+       ============================================================ */
+    const CategoryPieChart = ({ operations, currency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      if (!RechartsLib) return null;
+      
+      // Calcul mensualisé par catégorie (toutes les dépenses récurrentes lissées)
+      const data = useMemo(() => {
+        const totals = {};
+        operations.forEach(op => {
+          if (isTechnicalOperation(op)) return;
+          if (op.type !== OperationType.EXPENSE) return;
+          if (op.frequency === Frequency.ONCE) return;
+          let amount = op.amount;
+          if (op.frequency === Frequency.QUARTERLY) amount = amount / 3;
+          if (op.frequency === Frequency.ANNUAL) amount = amount / 12;
+          const cat = op.category || DEFAULT_CATEGORY;
+          totals[cat] = (totals[cat] || 0) + amount;
+        });
+        return Object.entries(totals)
+          .map(([catId, val]) => ({
+            name: CATEGORIES[catId]?.label || catId,
+            value: Math.round(val * rate),
+            color: CATEGORIES[catId]?.color || '#64748b',
+            catId
+          }))
+          .filter(d => d.value > 0)
+          .sort((a, b) => b.value - a.value);
+      }, [operations, rate]);
+
+      const total = data.reduce((sum, d) => sum + d.value, 0);
+
+      if (data.length === 0) {
+        return (
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <h3 className="text-xs md:text-sm font-semibold uppercase tracking-wider text-slate-500 mb-2">Dépenses par catégorie (mensualisé)</h3>
+            <div className="text-center text-slate-400 text-sm py-8 italic">Aucune dépense récurrente à analyser</div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm h-full flex flex-col">
+          <div className="flex justify-between items-center mb-2 shrink-0">
+            <h3 className="text-xs md:text-sm font-semibold uppercase tracking-wider text-slate-500">Dépenses mensualisées par catégorie</h3>
+            <span className="text-xs text-slate-400">Total: {formatCurrency(total, currency)}/mois</span>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 min-h-0">
+            <div className="w-full h-[160px] shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={35} outerRadius={65} paddingAngle={2}>
+                    {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v) => formatCurrency(v, currency)} contentStyle={{ borderRadius: '8px', border: 'none', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="w-full space-y-1 text-xs overflow-y-auto">
+              {data.map(d => (
+                <div key={d.catId} className="flex justify-between items-center">
+                  <span className="flex items-center gap-2">
+                    <span className="cat-dot" style={{ backgroundColor: d.color }}></span>
+                    {d.name}
+                  </span>
+                  <span className="font-medium text-slate-700">
+                    {formatCurrency(d.value, currency)}
+                    <span className="text-slate-400 ml-1">({Math.round(d.value/total*100)}%)</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       TABLEAU DE FORECAST
+       ============================================================ */
+    const ForecastTable = ({ data, onAdjustment, onSavingsAdjustment, isSimulation, currency }) => {
+      const [detailMonth, setDetailMonth] = useState(null); // l'objet `m` du mois cliqué
+      const [editingMonth, setEditingMonth] = useState(null);
+      const [editValue, setEditValue] = useState('');
+      const [showAll, setShowAll] = useState(false);
+      const visibleData = showAll ? data : data.slice(0, 24);
+
+      const handleStartEdit = (m) => {
+        setEditingMonth(m.monthKey);
+        setEditValue(Math.round(m.finalEndBalance));
+      };
+      const handleSaveEdit = () => {
+        if (editValue === '' || editValue === null) {
+          onAdjustment(editingMonth, undefined);
+        } else {
+          onAdjustment(editingMonth, parseFloat(editValue));
+        }
+        setEditingMonth(null);
+      };
+
+      return (
+        <div className={`bg-white rounded-xl border shadow-sm overflow-hidden ${isSimulation ? 'border-amber-300' : 'border-slate-200'}`}>
+          <div className="p-3 border-b border-slate-100 flex justify-between items-center">
+            <h3 className="text-xs md:text-sm font-semibold uppercase tracking-wider text-slate-500">Tableau prévisionnel</h3>
+            <button onClick={() => setShowAll(!showAll)} className="text-[10px] flex items-center gap-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600">
+              {showAll ? 'Réduire' : 'Voir 10 ans'}
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 md:px-6 py-2.5 text-left">Mois</th>
+                  <th className="px-4 md:px-6 py-2.5 text-right">Revenus</th>
+                  <th className="px-4 md:px-6 py-2.5 text-right">Dépenses</th>
+                  <th className="px-4 md:px-6 py-2.5 text-right" title="Argent disponible sur ton compte bancaire">Compte courant</th>
+                  <th className="px-4 md:px-6 py-2.5 text-right text-emerald-600" title="Capital épargné cumulé (versements + intérêts composés)">Capital épargné</th>
+                  <th className="px-4 md:px-6 py-2.5 text-right font-bold" title="Compte courant + Capital épargné">Patrimoine</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleData.map(m => {
+                  const isEditing = editingMonth === m.monthKey;
+                  const hasAdj = m.adjustedEndBalance !== null;
+                  return (
+                    <tr 
+                      key={m.monthKey}
+                      className={`border-t border-slate-100 hover:bg-slate-50 cursor-pointer ${m.finalEndBalance < 0 ? 'bg-rose-50/50' : ''}`}
+                      onClick={() => setDetailMonth(m)}
+                    >
+                      <td className="px-4 md:px-6 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <ChevronRight size={12} className="text-slate-400"/>
+                          <span className="font-medium text-slate-700">{m.label}</span>
+                          {m.events.length > 0 && (
+                            <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">{m.events.length}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 md:px-6 py-2.5 text-right text-emerald-600 font-medium">{m.totalIncome > 0 ? `+${formatCurrency(m.totalIncome, currency)}` : '-'}</td>
+                      <td className="px-4 md:px-6 py-2.5 text-right text-rose-600 font-medium">{m.totalExpense > 0 ? `-${formatCurrency(m.totalExpense, currency)}` : '-'}</td>
+                      <td className="px-4 md:px-6 py-2.5 text-right">
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            type="number"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleSaveEdit}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(); if (e.key === 'Escape') setEditingMonth(null); }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-24 p-1 border border-blue-400 rounded text-right"
+                          />
+                        ) : (
+                          <span 
+                            onClick={(e) => { e.stopPropagation(); handleStartEdit(m); }} 
+                            className={`font-bold cursor-pointer hover:text-blue-600 ${m.finalEndBalance < 0 ? 'text-rose-600' : 'text-slate-700'} ${hasAdj ? 'underline decoration-dotted' : ''}`}
+                            title={hasAdj ? 'Solde ajusté manuellement' : 'Cliquer pour ajuster'}
+                          >
+                            {formatCurrency(m.finalEndBalance, currency)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 md:px-6 py-2.5 text-right text-emerald-700">
+                        {m.savingsCapital > 0 ? formatCurrency(m.savingsCapital, currency) : '-'}
+                      </td>
+                      <td className={`px-4 md:px-6 py-2.5 text-right font-bold ${m.patrimoine < 0 ? 'text-rose-600' : 'text-indigo-700'}`}>
+                        {formatCurrency(m.patrimoine, currency)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {detailMonth && (
+            <MonthDetailsModal 
+              month={detailMonth}
+              currency={currency}
+              onAdjustment={onAdjustment}
+              onSavingsAdjustment={onSavingsAdjustment}
+              onClose={() => setDetailMonth(null)}
+            />
+          )}
+        </div>
+      );
+    };
+
+    /* ============================================================
+       CELLULE BALANCE ÉPARGNE ÉDITABLE
+       ============================================================ */
+    const SavingsBalanceCell = ({ value, currency, onAdjust }) => {
+      const [isEditing, setIsEditing] = useState(false);
+      const [editValue, setEditValue] = useState(Math.round(value));
+
+      useEffect(() => { setEditValue(Math.round(value)); }, [value]);
+
+      const handleSave = () => {
+        if (editValue === '' || editValue === null) {
+          onAdjust(undefined);
+        } else {
+          onAdjust(parseFloat(editValue));
+        }
+        setIsEditing(false);
+      };
+
+      if (isEditing) {
+        return (
+          <input
+            autoFocus
+            type="number"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={(e) => { 
+              if (e.key === 'Enter') handleSave(); 
+              if (e.key === 'Escape') setIsEditing(false); 
+            }}
+            className="w-24 p-0.5 border border-indigo-400 rounded text-right text-xs font-bold"
+          />
+        );
+      }
+      return (
+        <span 
+          onClick={() => { setEditValue(Math.round(value)); setIsEditing(true); }}
+          className="font-bold text-indigo-700 cursor-pointer hover:underline text-xs"
+          title="Cliquer pour caler sur la vraie valeur"
+        >
+          {formatCurrency(value, currency)}
+        </span>
+      );
+    };
+
+    /* ============================================================
+       MODAL DÉTAILS DU MOIS (popup au clic sur ligne du tableau)
+       ============================================================ */
+    const MonthDetailsModal = ({ month, currency, onAdjustment, onSavingsAdjustment, onClose }) => {
+      const m = month;
+      const hasAdj = m.adjustedEndBalance !== null;
+      // Note: m.activeOperations contient déjà les montants dans la devise affichée
+      const incomes = (m.activeOperations || []).filter(o => o.type === OperationType.INCOME && !isTechnicalOperation(o));
+      const expenses = (m.activeOperations || []).filter(o => o.type === OperationType.EXPENSE && !isTechnicalOperation(o));
+      const techOps = (m.activeOperations || []).filter(o => isTechnicalOperation(o));
+      const totalIncomes = incomes.reduce((s, o) => s + (o.amount || 0), 0);
+      const totalExpenses = expenses.reduce((s, o) => s + (o.amount || 0), 0);
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] animate-zoom">
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <Calendar size={18} className="text-blue-600"/>
+                  Détail du mois – {m.label}
+                </h3>
+                <div className="text-xs text-slate-500 mt-1">
+                  Solde fin : <span className={`font-bold ${m.finalEndBalance < 0 ? 'text-rose-600' : 'text-slate-700'}`}>{formatCurrency(m.finalEndBalance, currency)}</span>
+                </div>
+              </div>
+              <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200"><X size={20}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* REVENUS */}
+              <div>
+                <div className="text-xs uppercase font-bold text-emerald-600 mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1"><TrendingUp size={13}/> Revenus ({incomes.length})</span>
+                  <span>+{formatCurrency(totalIncomes, currency)}</span>
+                </div>
+                {incomes.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic">Aucun revenu ce mois</div>
+                ) : (
+                  <div className="space-y-1">
+                    {incomes.map((op, i) => (
+                      <div key={i} className="text-xs flex items-center gap-2 text-slate-700 bg-emerald-50/60 rounded px-2 py-1.5">
+                        <CategoryChip catId={op.category || DEFAULT_CATEGORY} size="xs"/>
+                        <span className="flex-1 truncate">{op.label}</span>
+                        <span className="font-medium text-emerald-600">+{formatCurrency(op.amount || 0, currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* DEPENSES */}
+              <div>
+                <div className="text-xs uppercase font-bold text-rose-600 mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1"><TrendingDown size={13}/> Dépenses ({expenses.length})</span>
+                  <span>-{formatCurrency(totalExpenses, currency)}</span>
+                </div>
+                {expenses.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic">Aucune dépense ce mois</div>
+                ) : (
+                  <div className="space-y-1">
+                    {expenses.map((op, i) => (
+                      <div key={i} className="text-xs flex items-center gap-2 text-slate-700 bg-rose-50/60 rounded px-2 py-1.5">
+                        <CategoryChip catId={op.category || DEFAULT_CATEGORY} size="xs"/>
+                        <span className="flex-1 truncate">{op.label}</span>
+                        <span className="font-medium text-rose-600">-{formatCurrency(op.amount || 0, currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ÉPARGNE - activité des poches ce mois */}
+              {m.accountsActivity && m.accountsActivity.length > 0 && (
+                <div>
+                  <div className="text-xs uppercase font-bold text-indigo-600 mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1"><PiggyBank size={13}/> Épargne ({m.accountsActivity.length} poche{m.accountsActivity.length > 1 ? 's' : ''})</span>
+                    <span className="font-bold">{formatCurrency(m.savingsCapital || 0, currency)}</span>
+                  </div>
+                  <div className="space-y-1">
+                    {m.accountsActivity.map((acc, i) => (
+                      <div key={i} className="bg-indigo-50/60 rounded px-2 py-1.5">
+                        <div className="text-xs flex items-center gap-2 text-slate-700">
+                          <span className="flex-1 truncate font-medium">{acc.name} <span className="text-slate-400 text-[10px]">({acc.type})</span></span>
+                          <SavingsBalanceCell 
+                            value={acc.newBalance}
+                            currency={currency}
+                            onAdjust={(v) => onSavingsAdjustment(m.monthKey, acc.id, v)}
+                          />
+                        </div>
+                        <div className="flex gap-3 text-[10px] text-slate-500 mt-0.5 ml-0">
+                          {acc.deposit > 0 && <span>↓ Versé : {formatCurrency(acc.deposit, currency)}</span>}
+                          {acc.interest > 0 && <span className="text-emerald-600">+ Intérêts : {formatCurrency(acc.interest, currency)}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-[10px] text-indigo-600 italic text-center">
+                    Patrimoine total ce mois : {formatCurrency(m.patrimoine || 0, currency)}
+                  </div>
+                </div>
+              )}
+
+              {/* OPS TECHNIQUES */}
+              {techOps.length > 0 && (
+                <div>
+                  <div className="text-xs uppercase font-bold text-slate-500 mb-2 flex items-center gap-1">
+                    <History size={13}/> Ajustements / Techniques ({techOps.length})
+                  </div>
+                  <div className="space-y-1">
+                    {techOps.map((op, i) => (
+                      <div key={i} className="text-xs flex items-center gap-2 text-slate-600 bg-slate-100/60 rounded px-2 py-1.5">
+                        <span className="flex-1 truncate">{op.label}</span>
+                        <span className={`font-medium ${op.type === OperationType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {op.type === OperationType.INCOME ? '+' : '-'}{formatCurrency(op.amount || 0, currency)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="shrink-0 border-t border-slate-100">
+              {hasAdj && (
+                <div className="text-xs text-amber-700 flex items-center gap-2 bg-amber-50 px-4 py-2.5 border-b border-amber-100">
+                  <Info size={14} className="shrink-0"/>
+                  <span>Solde du compte courant ajusté manuellement</span>
+                  <button 
+                    onClick={() => { onAdjustment(m.monthKey, undefined); onClose(); }} 
+                    className="ml-auto shrink-0 px-2 py-1 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded font-medium whitespace-nowrap"
+                  >
+                    ✕ Annuler l'ajustement
+                  </button>
+                </div>
+              )}
+              <div className="p-3 bg-slate-50 text-[10px] text-slate-500 text-center">
+                {(m.activeOperations || []).length} opération(s) active(s) ce mois
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       MODAL PAIEMENT (Acompte / Solde final / Régularisation)
+       ============================================================ */
+    const PaymentModal = ({ target, onClose, onConfirm, currency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const toView = (v) => v * rate;
+      const fromView = (v) => v / rate;
+      const { op, monthKey } = target;
+
+      // Mode : 'FINAL' (paiement complet avec régularisation) ou 'ADVANCE' (acompte vers mois cible)
+      const [mode, setMode] = useState('FINAL');
+      const [amount, setAmount] = useState(Math.round(toView(op.amount)));
+      const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+      
+      // Mois cible pour acompte (mois suivant par défaut)
+      const defaultTargetMonth = useMemo(() => {
+        const [y, m] = monthKey.split('-').map(Number);
+        const d = new Date(y, m, 1); // mois suivant
+        return generateMonthKey(d);
+      }, [monthKey]);
+      const [targetMonth, setTargetMonth] = useState(defaultTargetMonth);
+
+      const handleConfirm = () => {
+        const amountEur = fromView(parseFloat(amount));
+        if (!amountEur || amountEur <= 0) return;
+        onConfirm({
+          mode,
+          amount: amountEur,
+          date,
+          targetMonth: mode === 'ADVANCE' ? targetMonth : null
+        });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[75] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-zoom">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <CreditCard size={18} className="text-blue-600"/>
+                Paiement – {op.label}
+              </h3>
+              <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"><X size={20}/></button>
+            </div>
+
+            <div className="p-4 space-y-3 flex-1 overflow-y-auto">
+              <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600">
+                <div>Prévu : <span className="font-bold">{formatCurrency(op.amount * rate, currency)}</span></div>
+                <div>Pour le mois : <span className="font-bold">{monthKey}</span></div>
+              </div>
+
+              {/* Sélection du mode */}
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase mb-1 block">Type de paiement</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMode('FINAL')}
+                    className={`p-2 rounded-lg text-xs font-medium border ${mode === 'FINAL' ? 'bg-blue-50 border-blue-400 text-blue-700' : 'bg-white border-slate-200 text-slate-600'}`}
+                  >
+                    <Check size={14} className="mx-auto mb-1"/>
+                    Solde / Régul
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('ADVANCE')}
+                    className={`p-2 rounded-lg text-xs font-medium border ${mode === 'ADVANCE' ? 'bg-amber-50 border-amber-400 text-amber-700' : 'bg-white border-slate-200 text-slate-600'}`}
+                  >
+                    <Clock size={14} className="mx-auto mb-1"/>
+                    Acompte
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {mode === 'FINAL' 
+                    ? 'Paiement final : la prévision du mois est clôturée.'
+                    : 'Acompte : la somme sera déduite d\'un mois ultérieur.'}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Montant payé ({currency})</label>
+                <input 
+                  type="number" 
+                  value={amount} 
+                  onChange={(e) => setAmount(e.target.value)} 
+                  className="w-full p-2 border border-slate-300 rounded-lg mt-1" 
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Date du paiement</label>
+                <input 
+                  type="date" 
+                  value={date} 
+                  onChange={(e) => setDate(e.target.value)} 
+                  className="w-full p-2 border border-slate-300 rounded-lg mt-1" 
+                />
+              </div>
+
+              {mode === 'ADVANCE' && (
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Mois à déduire</label>
+                  <input 
+                    type="month" 
+                    value={targetMonth} 
+                    onChange={(e) => setTargetMonth(e.target.value)} 
+                    className="w-full p-2 border border-slate-300 rounded-lg mt-1" 
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    L'acompte de {formatCurrency(parseFloat(amount || 0), currency)} sera retranché du solde prévisionnel de ce mois.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-2 shrink-0">
+              <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler</button>
+              <button onClick={handleConfirm} className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-medium">Confirmer</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       MODAL PILOTAGE DU MOIS
+       ============================================================ */
+    const MonthTrackerModal = ({ operations, onClose, onAction, currency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const now = new Date();
+      const currentMonthKey = generateMonthKey(now);
+      const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(now);
+
+      const dueThisMonth = useMemo(() => {
+        try {
+          return operations.filter(op => {
+            try {
+              if (!op || typeof op !== 'object') return false;
+              if (isTechnicalOperation(op)) return false;
+              if (op.frequency === Frequency.ONCE) {
+                return op.date && typeof op.date === 'string' && op.date.substring(0, 7) === currentMonthKey;
+              }
+              if (!op.startDate || typeof op.startDate !== 'string') return false;
+              const opStart = parseDateLocal(op.startDate);
+              if (isNaN(opStart.getTime())) return false;
+              const opEnd = op.endDate ? parseDateLocal(op.endDate) : null;
+              if (opEnd && isNaN(opEnd.getTime())) return false;
+              const startYM = generateMonthKey(opStart);
+              const endYM = opEnd ? generateMonthKey(opEnd) : null;
+              if (currentMonthKey < startYM) return false;
+              if (endYM && currentMonthKey > endYM) return false;
+              const diffYear = now.getFullYear() - opStart.getFullYear();
+              const diffMonth = now.getMonth() - opStart.getMonth();
+              const totalMonthsDiff = diffYear * 12 + diffMonth;
+              if (op.frequency === Frequency.MONTHLY) return true;
+              if (op.frequency === Frequency.QUARTERLY) return totalMonthsDiff % 3 === 0;
+              if (op.frequency === Frequency.ANNUAL) return totalMonthsDiff % 12 === 0;
+              return false;
+            } catch (e) {
+              console.warn('Op invalide ignorée:', op, e);
+              return false;
+            }
+          }).sort((a, b) => (b.amount || 0) - (a.amount || 0));
+        } catch (e) {
+          console.error('Erreur calcul dueThisMonth:', e);
+          return [];
+        }
+      }, [operations, currentMonthKey]);
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-zoom">
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <CalendarCheck size={18} className="text-indigo-600"/> 
+                Pilotage – {monthLabel}
+              </h3>
+              <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200"><X size={20}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {dueThisMonth.length === 0 && <div className="text-center text-slate-400 italic py-8">Aucune opération à valider ce mois</div>}
+              {dueThisMonth.map(op => (
+                <div key={op.id} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <div className="font-medium text-slate-800 text-sm">{op.label}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <CategoryChip catId={op.category || DEFAULT_CATEGORY} size="xs"/>
+                      </div>
+                    </div>
+                    <div className={`text-sm font-bold ${op.type === OperationType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {op.type === OperationType.INCOME ? '+' : '-'}{formatCurrency(op.amount * rate, currency)}
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <button onClick={() => onAction(op, currentMonthKey, 'PAY_EXACT')} className="flex-1 px-2 py-1.5 bg-emerald-100 text-emerald-700 text-xs font-medium rounded hover:bg-emerald-200 flex items-center justify-center gap-1">
+                      <Check size={12}/> Payé conforme
+                    </button>
+                    <button onClick={() => onAction(op, currentMonthKey, 'OPEN_MODAL')} className="flex-1 px-2 py-1.5 bg-blue-100 text-blue-700 text-xs font-medium rounded hover:bg-blue-200 flex items-center justify-center gap-1">
+                      <CreditCard size={12}/> Acompte / Régul
+                    </button>
+                    <button onClick={() => onAction(op, currentMonthKey, 'CANCEL')} className="px-2 py-1.5 bg-slate-200 text-slate-600 text-xs font-medium rounded hover:bg-slate-300">
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-3 border-t border-slate-100 bg-slate-50 text-[10px] text-slate-500 text-center shrink-0">
+              {dueThisMonth.length} opération(s) prévue(s) ce mois
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       MODAL HISTORIQUE DE SAUVEGARDES
+       ============================================================ */
+    const HistoryModal = ({ history, onRestore, onClose }) => {
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh] animate-zoom">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <History size={18} className="text-blue-600"/> Historique des sauvegardes
+              </h3>
+              <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"><X size={20}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {(!history || history.length === 0) && <div className="text-center text-slate-400 italic py-8">Aucune sauvegarde historique disponible</div>}
+              {history && history.map(h => (
+                <div key={h.id} className="border border-slate-200 rounded-lg p-3 flex justify-between items-center">
+                  <div>
+                    <div className="font-medium text-slate-700 text-sm">
+                      {new Date(h.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                    </div>
+                    <div className="text-[10px] text-slate-400">{(h.size / 1024).toFixed(1)} KB · {formatRelativeTime(h.date)}</div>
+                  </div>
+                  <button onClick={() => onRestore(h)} className="px-3 py-1.5 bg-blue-50 text-blue-600 text-xs font-medium rounded hover:bg-blue-100 flex items-center gap-1">
+                    <RotateCcw size={12}/> Restaurer
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="p-3 border-t border-slate-100 bg-slate-50 text-[10px] text-slate-500 text-center shrink-0">
+              Les 5 dernières versions sont conservées sur ton Drive
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       MODAL VÉRIFICATION DES CATÉGORIES (après import auto)
+       ============================================================ */
+    const CategoryReviewModal = ({ operations, onConfirm, onClose, currency, currentDefaultCurrency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const [overrides, setOverrides] = useState({});
+      const [defaultCurrency, setDefaultCurrency] = useState(currentDefaultCurrency || 'EUR');
+
+      const setOverride = (opId, catId) => {
+        setOverrides(prev => ({ ...prev, [opId]: catId }));
+      };
+
+      const handleConfirm = () => {
+        const updated = operations.map(op => ({
+          ...op,
+          category: overrides[op.id] || op.category || DEFAULT_CATEGORY
+        }));
+        onConfirm(updated, defaultCurrency);
+      };
+
+      // Grouper par catégorie pour visualisation
+      const grouped = useMemo(() => {
+        const g = {};
+        operations.forEach(op => {
+          const cat = overrides[op.id] || op.category || DEFAULT_CATEGORY;
+          if (!g[cat]) g[cat] = [];
+          g[cat].push(op);
+        });
+        return g;
+      }, [operations, overrides]);
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-zoom">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <Wand size={18} className="text-purple-600"/> Vérifier les catégories proposées
+              </h3>
+              <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"><X size={20}/></button>
+            </div>
+            <div className="px-4 py-3 bg-purple-50 border-b border-purple-100 text-xs text-purple-700 shrink-0">
+              <p>{operations.length} opérations ont été catégorisées automatiquement. Tu peux modifier celles qui ne sont pas correctes en cliquant sur la catégorie.</p>
+            </div>
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 shrink-0">
+              <label className="text-xs font-medium text-slate-600 uppercase mb-2 block">Devise d'affichage par défaut</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDefaultCurrency('EUR')}
+                  className={`p-2 rounded-lg text-xs font-medium border ${defaultCurrency === 'EUR' ? 'bg-blue-50 border-blue-400 text-blue-700' : 'bg-white border-slate-200 text-slate-600'}`}
+                >
+                  € EUR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDefaultCurrency('XPF')}
+                  className={`p-2 rounded-lg text-xs font-medium border ${defaultCurrency === 'XPF' ? 'bg-blue-50 border-blue-400 text-blue-700' : 'bg-white border-slate-200 text-slate-600'}`}
+                >
+                  F XPF
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">L'app s'ouvrira par défaut dans cette devise. Tu peux la changer à tout moment via le bouton en haut.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {CATEGORY_LIST.map(cat => {
+                const ops = grouped[cat.id] || [];
+                if (ops.length === 0) return null;
+                return (
+                  <div key={cat.id}>
+                    <div className="flex items-center gap-2 mb-2 sticky top-0 bg-white py-1">
+                      <span className="cat-dot" style={{ backgroundColor: cat.color, width: 12, height: 12 }}></span>
+                      <span className="font-bold text-sm" style={{ color: cat.color }}>{cat.icon} {cat.label}</span>
+                      <span className="text-xs text-slate-400">({ops.length})</span>
+                    </div>
+                    <div className="space-y-1 ml-2">
+                      {ops.map(op => (
+                        <div key={op.id} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded text-xs">
+                          <span className="flex-1 truncate text-slate-700">{op.label}</span>
+                          <span className="text-slate-400 mx-2">{formatCurrency(op.amount * rate, currency)}</span>
+                          <select
+                            value={overrides[op.id] || op.category || DEFAULT_CATEGORY}
+                            onChange={(e) => setOverride(op.id, e.target.value)}
+                            className="text-xs border border-slate-200 rounded px-1 py-0.5 bg-white"
+                          >
+                            {CATEGORY_LIST.map(c => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-2 shrink-0">
+              <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler l'import</button>
+              <button onClick={handleConfirm} className="flex-1 px-3 py-2 text-sm bg-purple-600 text-white hover:bg-purple-700 rounded-lg font-medium flex items-center justify-center gap-1">
+                <Check size={14}/> Valider et importer
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       BANDEAU ALERTE POINT BAS CRITIQUE
+       ============================================================ */
+    const CriticalAlertBanner = ({ point, threshold, currency, onDismiss, onAdjust }) => {
+      return (
+        <div className="bg-amber-50 border-l-4 border-amber-500 rounded-lg p-3 flex items-start gap-3 shadow-sm">
+          <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5"/>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-amber-800 text-sm">Point bas critique détecté</div>
+            <div className="text-xs text-amber-700 mt-0.5">
+              Ton solde passera à <span className="font-bold">{formatCurrency(point.finalEndBalance, currency)}</span> en {point.label} (seuil d'alerte : {formatCurrency(threshold, currency)}).
+            </div>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            <button onClick={onAdjust} className="text-[10px] px-2 py-1 bg-white border border-amber-300 text-amber-700 hover:bg-amber-100 rounded">Ajuster seuil</button>
+            <button onClick={onDismiss} className="text-amber-600 hover:text-amber-800 p-1"><X size={16}/></button>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       INDICATEUR ÉPARGNE DU MOIS COURANT
+       ============================================================ */
+    const MonthSavingsCard = ({ actual, average, currency }) => {
+      const diff = actual - average;
+      const isAbove = diff > 0;
+      return (
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+              <PiggyBank size={13}/> Épargne ce mois-ci
+            </span>
+          </div>
+          <div className="flex items-end gap-3">
+            <div>
+              <div className={`text-2xl font-bold ${actual > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {actual > 0 ? '+' : ''}{formatCurrency(actual, currency)}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">vs moyenne lissée : {formatCurrency(average, currency)}</div>
+            </div>
+            <div className={`text-xs font-medium ml-auto ${isAbove ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {isAbove ? '▲' : '▼'} {formatCurrency(Math.abs(diff), currency)}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       TOP 5 FUITES
+       ============================================================ */
+    const TopLeaksCard = ({ leaks, currency }) => {
+      if (!leaks || leaks.length === 0) return null;
+      const maxValue = leaks[0]?.value || 1;
+      return (
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Top 5 fuites (récurrentes mensualisées)</h3>
+          <div className="space-y-2">
+            {leaks.map((leak, i) => (
+              <div key={leak.catId}>
+                <div className="flex justify-between items-center text-xs mb-1">
+                  <span className="flex items-center gap-2">
+                    <span className="font-bold text-slate-400 w-4">#{i+1}</span>
+                    <CategoryChip catId={leak.catId} size="xs"/>
+                  </span>
+                  <span className="font-medium text-slate-700">
+                    {formatCurrency(leak.value, currency)}
+                    <span className="text-slate-400 ml-1">({leak.pct}%)</span>
+                  </span>
+                </div>
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full rounded-full" 
+                    style={{ width: `${(leak.value / maxValue) * 100}%`, backgroundColor: leak.cat.color }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       VUE ANNUELLE AGRÉGÉE
+       ============================================================ */
+    const YearlyView = ({ data, currency }) => {
+      if (!data || data.length === 0) return <div className="bg-white p-4 rounded-xl border border-slate-200 text-slate-400 italic">Aucune donnée annuelle</div>;
+      return (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-3 border-b border-slate-100">
+            <h3 className="text-xs md:text-sm font-semibold uppercase tracking-wider text-slate-500">Vue annuelle agrégée</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-2.5 text-left">Année</th>
+                  <th className="px-4 py-2.5 text-right">Revenus</th>
+                  <th className="px-4 py-2.5 text-right">Dépenses</th>
+                  <th className="px-4 py-2.5 text-right">Épargne nette</th>
+                  <th className="px-4 py-2.5 text-right">Solde fin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map(y => (
+                  <tr key={y.year} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-bold text-slate-700">{y.year}</td>
+                    <td className="px-4 py-2.5 text-right text-emerald-600 font-medium">+{formatCurrency(y.totalIncome, currency)}</td>
+                    <td className="px-4 py-2.5 text-right text-rose-600 font-medium">-{formatCurrency(y.totalExpense, currency)}</td>
+                    <td className={`px-4 py-2.5 text-right font-bold ${y.netSavings >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {y.netSavings >= 0 ? '+' : ''}{formatCurrency(y.netSavings, currency)}
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-bold ${y.endBalance < 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+                      {formatCurrency(y.endBalance, currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       COMPARAISON N vs N-1
+       ============================================================ */
+    const YearComparisonView = ({ comparison, currency }) => {
+      if (!comparison || !comparison.data || comparison.data.length === 0) {
+        return (
+          <div className="bg-white p-4 rounded-xl border border-slate-200 text-slate-400 italic text-sm">
+            Aucune donnée pour comparer {comparison?.previous || 'N-1'} vs {comparison?.current || 'N'}.
+          </div>
+        );
+      }
+      return (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-3 border-b border-slate-100">
+            <h3 className="text-xs md:text-sm font-semibold uppercase tracking-wider text-slate-500">
+              Comparaison {comparison.previous} → {comparison.current} (dépenses par catégorie)
+            </h3>
+          </div>
+          <div className="p-3 space-y-2">
+            {comparison.data.map(row => {
+              if (row.current === 0 && row.previous === 0) return null;
+              return (
+                <div key={row.catId} className="flex items-center gap-2 text-xs">
+                  <div className="w-32 shrink-0"><CategoryChip catId={row.catId} size="xs"/></div>
+                  <div className="flex-1 text-right text-slate-500">
+                    {row.previous > 0 ? formatCurrency(row.previous, currency) : '-'}
+                  </div>
+                  <div className="text-slate-400 px-1">→</div>
+                  <div className="flex-1 text-left text-slate-700 font-medium">
+                    {row.current > 0 ? formatCurrency(row.current, currency) : '-'}
+                  </div>
+                  <div className={`w-20 text-right text-[10px] font-bold ${row.delta > 0 ? 'text-rose-500' : row.delta < 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                    {row.pctChange > 0 ? '+' : ''}{Math.round(row.pctChange)}%
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       FORMULAIRE COMPTE D'ÉPARGNE
+       ============================================================ */
+    const SavingsAccountForm = ({ initialData, onSave, onDelete, onClose, currency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const [name, setName] = useState(initialData?.name || '');
+      const [type, setType] = useState(initialData?.type || 'LIVRET');
+      const [balance, setBalance] = useState(initialData ? Math.round(initialData.balance * rate) : 0);
+      const [annualRate, setAnnualRate] = useState(initialData?.annualRate ?? 3);
+      const [monthlyDeposit, setMonthlyDeposit] = useState(initialData ? Math.round(initialData.monthlyDeposit * rate) : 0);
+      const [startDate, setStartDate] = useState(initialData?.startDate || new Date().toISOString().slice(0, 10));
+      const [endDate, setEndDate] = useState(initialData?.endDate || '');
+
+      const handleSubmit = () => {
+        if (!name.trim()) return;
+        onSave({
+          id: initialData?.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 9)),
+          name: name.trim(),
+          type,
+          balance: parseFloat(balance) / rate,
+          annualRate: parseFloat(annualRate),
+          monthlyDeposit: parseFloat(monthlyDeposit) / rate,
+          startDate,
+          endDate: endDate || null
+        });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-zoom max-h-[90vh] flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <h3 className="font-bold text-slate-800">{initialData ? 'Modifier la poche' : 'Nouvelle poche d\'épargne'}</h3>
+              <button onClick={onClose} className="p-1 text-slate-400"><X size={20}/></button>
+            </div>
+            <div className="p-4 space-y-3 overflow-y-auto">
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Nom de la poche</label>
+                <input autoFocus type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" placeholder="Ex: Livret A, Bitcoin..."/>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Type</label>
+                <select value={type} onChange={(e) => setType(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1 bg-white">
+                  <option value="LIVRET">Livret (A, LDD, LEP...)</option>
+                  <option value="PEL">PEL / CEL</option>
+                  <option value="AV">Assurance-vie</option>
+                  <option value="PEA">PEA / Actions / ETF</option>
+                  <option value="CRYPTO">Cryptomonnaies</option>
+                  <option value="SCPI">SCPI / Immobilier</option>
+                  <option value="AUTRE">Autre</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Solde actuel ({currency})</label>
+                  <input type="number" value={balance} onChange={(e) => setBalance(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Taux annuel (%)</label>
+                  <input type="number" step="0.1" value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Versement mensuel ({currency})</label>
+                <input type="number" value={monthlyDeposit} onChange={(e) => setMonthlyDeposit(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                <p className="text-[10px] text-slate-400 mt-1">Apparaîtra en dépense automatique sur le compte courant. Mets 0 si pas de versement régulier.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Date de début</label>
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                  <p className="text-[10px] text-slate-400 mt-1">Quand commencer à verser</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Date de fin (optionnel)</label>
+                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                  <p className="text-[10px] text-slate-400 mt-1">Pour arrêter les versements</p>
+                </div>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-[11px] text-amber-800 mt-2">
+                <strong>Mode capitalisé</strong> : les intérêts restent dans la poche (pas reversés sur le compte courant). Le capital grossit, visible dans le tableau.
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-2 flex-wrap shrink-0">
+              {initialData && <button onClick={() => onDelete(initialData.id)} className="px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-1"><Trash2 size={14}/> Supprimer</button>}
+              <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler</button>
+              <button onClick={handleSubmit} className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-medium">Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       FORMULAIRE OBJECTIF
+       ============================================================ */
+    const GoalForm = ({ initialData, onSave, onDelete, onClose, currency }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const [name, setName] = useState(initialData?.name || '');
+      const [targetAmount, setTargetAmount] = useState(initialData ? Math.round(initialData.targetAmount * rate) : 10000);
+      const [targetDate, setTargetDate] = useState(initialData?.targetDate || new Date(new Date().setFullYear(new Date().getFullYear() + 2)).toISOString().slice(0,7));
+      const [currentAmount, setCurrentAmount] = useState(initialData ? Math.round(initialData.currentAmount * rate) : 0);
+
+      const handleSubmit = () => {
+        if (!name.trim() || !targetAmount) return;
+        onSave({
+          id: initialData?.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 9)),
+          name: name.trim(),
+          targetAmount: parseFloat(targetAmount) / rate,
+          targetDate,
+          currentAmount: parseFloat(currentAmount) / rate
+        });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-zoom">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="font-bold text-slate-800">{initialData ? 'Modifier l\'objectif' : 'Nouvel objectif'}</h3>
+              <button onClick={onClose} className="p-1 text-slate-400"><X size={20}/></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Nom de l'objectif</label>
+                <input autoFocus type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1" placeholder="Ex: Apport appartement..."/>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Montant cible ({currency})</label>
+                  <input type="number" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Échéance</label>
+                  <input type="month" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Déjà épargné ({currency})</label>
+                <input type="number" value={currentAmount} onChange={(e) => setCurrentAmount(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg mt-1"/>
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-2 flex-wrap">
+              {initialData && <button onClick={() => onDelete(initialData.id)} className="px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-1"><Trash2 size={14}/> Supprimer</button>}
+              <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">Annuler</button>
+              <button onClick={handleSubmit} className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-medium">Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       VUE OBJECTIFS FINANCIERS
+       ============================================================ */
+    const GoalsView = ({ goals, savingsCapacityNow, currency, onEdit, onAdd }) => {
+      const computeGoal = (g) => {
+        const now = new Date();
+        const [y, m] = g.targetDate.split('-').map(Number);
+        const target = new Date(y, m - 1, 1);
+        const monthsLeft = Math.max(1, (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth()));
+        const remaining = Math.max(0, g.targetAmount - g.currentAmount);
+        const needed = remaining / monthsLeft;
+        const progress = g.targetAmount > 0 ? Math.min(100, Math.round(g.currentAmount / g.targetAmount * 100)) : 0;
+        const feasible = needed <= (savingsCapacityNow / (currency === 'XPF' ? RATE_EUR_XPF : 1));
+        return { monthsLeft, remaining, needed, progress, feasible };
+      };
+
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700">Objectifs financiers</h3>
+            <button onClick={onAdd} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg flex items-center gap-1 hover:bg-blue-700">
+              <Plus size={12}/> Nouvel objectif
+            </button>
+          </div>
+          {goals.length === 0 && (
+            <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-slate-400 italic text-sm">
+              Aucun objectif défini. Crée ton premier objectif pour planifier.
+            </div>
+          )}
+          {goals.map(g => {
+            const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+            const c = computeGoal(g);
+            const targetView = g.targetAmount * rate;
+            const currentView = g.currentAmount * rate;
+            const neededView = c.needed * rate;
+            return (
+              <div key={g.id} onClick={() => onEdit(g)} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-blue-300">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="font-bold text-slate-800">{g.name}</div>
+                    <div className="text-xs text-slate-400">Échéance : {g.targetDate} · dans {c.monthsLeft} mois</div>
+                  </div>
+                  <div className={`text-xs font-bold px-2 py-1 rounded ${c.feasible ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                    {c.feasible ? 'Atteignable' : 'Difficile'}
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500 mb-1">
+                  {formatCurrency(currentView, currency)} / {formatCurrency(targetView, currency)} ({c.progress}%)
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden mb-2">
+                  <div className="h-full bg-blue-500 rounded-full" style={{ width: `${c.progress}%` }}/>
+                </div>
+                <div className="text-xs text-slate-600">
+                  Il faut épargner <span className="font-bold text-slate-800">{formatCurrency(neededView, currency)}</span>/mois pour y arriver
+                  <span className="text-slate-400 ml-2">(capacité actuelle : {formatCurrency(savingsCapacityNow, currency)})</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
+    /* ============================================================
+       MODULE ÉPARGNE & PLACEMENTS
+       ============================================================ */
+    const SavingsView = ({ 
+      forecast, currency, safetyMattress, setSafetyMattress, 
+      savingsCapacityLisse, savingsAccounts, onAddAccount, onEditAccount,
+      whatIfAmount, setWhatIfAmount, whatIfRate, setWhatIfRate, 
+      whatIfYears, setWhatIfYears
+    }) => {
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+
+      // Matelas de sécurité (X mois de dépenses mensuelles moyennes lissées)
+      const monthlyExpenseLisse = useMemo(() => {
+        // Approximation depuis le forecast
+        if (!forecast || forecast.length === 0) return 0;
+        const avg = forecast.slice(0, 12).reduce((s, m) => s + m.totalExpense, 0) / Math.min(12, forecast.length);
+        return avg;
+      }, [forecast]);
+      
+      const mattressAmount = monthlyExpenseLisse * safetyMattress;
+      
+      // Excédent placable mois par mois
+      const placeableData = useMemo(() => {
+        if (!forecast) return [];
+        return forecast.slice(0, 60).map(m => ({
+          label: m.label,
+          solde: m.finalEndBalance,
+          matelas: mattressAmount,
+          placable: Math.max(0, m.finalEndBalance - mattressAmount)
+        }));
+      }, [forecast, mattressAmount]);
+
+      // Projection des comptes d'épargne (intérêts composés mensuels)
+      const projectAccount = (acc, months) => {
+        const monthlyRate = (acc.annualRate / 100) / 12;
+        let bal = acc.balance;
+        const series = [];
+        for (let i = 0; i < months; i++) {
+          bal = bal * (1 + monthlyRate) + acc.monthlyDeposit;
+          series.push({ month: i + 1, value: bal });
+        }
+        return series;
+      };
+
+      const totalSavings = savingsAccounts.reduce((s, a) => s + a.balance, 0);
+      const totalProjected10y = savingsAccounts.reduce((s, a) => {
+        const series = projectAccount(a, 120);
+        return s + (series[series.length - 1]?.value || a.balance);
+      }, 0);
+
+      // Simulateur "What if"
+      const whatIfData = useMemo(() => {
+        const months = whatIfYears * 12;
+        const monthlyRate = (whatIfRate / 100) / 12;
+        const amountEur = whatIfAmount / rate;
+        let placed = 0;
+        let notPlaced = 0;
+        const series = [];
+        for (let i = 1; i <= months; i++) {
+          placed = placed * (1 + monthlyRate) + amountEur;
+          notPlaced += amountEur;
+          if (i % 6 === 0 || i === months || i === 1) {
+            series.push({
+              month: i,
+              year: (i / 12).toFixed(1),
+              place: placed * rate,
+              cash: notPlaced * rate
+            });
+          }
+        }
+        return series;
+      }, [whatIfAmount, whatIfRate, whatIfYears, rate]);
+
+      const whatIfFinal = whatIfData[whatIfData.length - 1] || { place: 0, cash: 0 };
+
+      return (
+        <div className="space-y-4">
+          {/* MATELAS DE SÉCURITÉ */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-700">Matelas de sécurité</h3>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-500">Combien de mois ?</label>
+                <input 
+                  type="number" min="1" max="24" step="1" value={safetyMattress} 
+                  onChange={(e) => setSafetyMattress(parseInt(e.target.value) || 3)}
+                  className="w-16 p-1 text-center border border-slate-300 rounded"
+                />
+              </div>
+            </div>
+            <div className="text-xs text-slate-500 mb-3">
+              Pour {safetyMattress} mois de dépenses moyennes ({formatCurrency(monthlyExpenseLisse * rate, currency)}/mois), 
+              il te faut un matelas de <span className="font-bold text-slate-700">{formatCurrency(mattressAmount * rate, currency)}</span>.
+            </div>
+            {RechartsLib && (
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={placeableData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorPlacable" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.7}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="label" tick={{fontSize: 10}} stroke="#94a3b8" minTickGap={30} />
+                    <YAxis tick={{fontSize: 10}} stroke="#94a3b8" tickFormatter={(v) => currency === 'EUR' ? `${(v*rate/1000).toFixed(0)}k€` : `${(v*rate/1000).toFixed(0)}k`} />
+                    <Tooltip 
+                      formatter={(value, name) => [formatCurrency(value * rate, currency), name === 'solde' ? 'Solde' : name === 'matelas' ? 'Matelas' : 'Plaçable']}
+                      contentStyle={{ borderRadius: '8px', border: 'none', fontSize: '12px' }}
+                    />
+                    <ReferenceLine y={mattressAmount} stroke="#f59e0b" strokeDasharray="3 3" label={{ value: "Matelas", fontSize: 10, fill: '#f59e0b' }}/>
+                    <Area type="monotone" dataKey="solde" stroke="#3b82f6" fill="none" />
+                    <Area type="monotone" dataKey="placable" stroke="#10b981" fillOpacity={1} fill="url(#colorPlacable)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* COMPTES D'ÉPARGNE */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-700">Mes poches d'épargne</h3>
+              <button onClick={onAddAccount} className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg flex items-center gap-1 hover:bg-blue-700">
+                <Plus size={12}/> Ajouter une poche
+              </button>
+            </div>
+            {savingsAccounts.length === 0 ? (
+              <div className="text-center text-slate-400 italic text-sm py-6">
+                Aucune poche définie. Ajoute Livret A, PEL, AV, crypto…
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <div className="text-[10px] uppercase text-slate-500 font-bold">Total actuel</div>
+                    <div className="text-xl font-bold text-slate-700">{formatCurrency(totalSavings * rate, currency)}</div>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-3">
+                    <div className="text-[10px] uppercase text-emerald-700 font-bold">Projection 10 ans</div>
+                    <div className="text-xl font-bold text-emerald-700">{formatCurrency(totalProjected10y * rate, currency)}</div>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {savingsAccounts.map(acc => {
+                    const proj = projectAccount(acc, 120);
+                    const final = proj[proj.length-1]?.value || acc.balance;
+                    return (
+                      <div key={acc.id} onClick={() => onEditAccount(acc)} className="border border-slate-200 rounded-lg p-3 hover:border-blue-300 cursor-pointer">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <div className="font-medium text-slate-800 text-sm">{acc.name}</div>
+                            <div className="text-[10px] text-slate-400">{acc.type} · {acc.annualRate}%/an · +{formatCurrency(acc.monthlyDeposit * rate, currency)}/mois</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-slate-700 text-sm">{formatCurrency(acc.balance * rate, currency)}</div>
+                            <div className="text-[10px] text-emerald-600">→ {formatCurrency(final * rate, currency)} dans 10 ans</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* SIMULATEUR WHAT IF */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Simulateur « What if »</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Et si tu plaçais X par mois à Y% pendant Z années ? Compare placé vs cash.
+            </p>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div>
+                <label className="text-[10px] uppercase text-slate-500 font-bold">Versement / mois ({currency})</label>
+                <input type="number" value={whatIfAmount} onChange={(e) => setWhatIfAmount(parseFloat(e.target.value) || 0)} className="w-full p-2 border border-slate-300 rounded-lg mt-1 text-sm"/>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase text-slate-500 font-bold">Taux annuel %</label>
+                <input type="number" step="0.1" value={whatIfRate} onChange={(e) => setWhatIfRate(parseFloat(e.target.value) || 0)} className="w-full p-2 border border-slate-300 rounded-lg mt-1 text-sm"/>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase text-slate-500 font-bold">Années</label>
+                <input type="number" min="1" max="40" value={whatIfYears} onChange={(e) => setWhatIfYears(parseInt(e.target.value) || 1)} className="w-full p-2 border border-slate-300 rounded-lg mt-1 text-sm"/>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="text-[10px] uppercase text-slate-500 font-bold">Sans placement (cash)</div>
+                <div className="text-lg font-bold text-slate-700">{formatCurrency(whatIfFinal.cash, currency)}</div>
+              </div>
+              <div className="bg-emerald-50 rounded-lg p-3">
+                <div className="text-[10px] uppercase text-emerald-700 font-bold">Avec placement ({whatIfRate}%)</div>
+                <div className="text-lg font-bold text-emerald-700">{formatCurrency(whatIfFinal.place, currency)}</div>
+                <div className="text-[10px] text-emerald-600 mt-1">Gain : +{formatCurrency(whatIfFinal.place - whatIfFinal.cash, currency)}</div>
+              </div>
+            </div>
+            {RechartsLib && whatIfData.length > 0 && (
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={whatIfData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="year" tick={{fontSize: 10}} stroke="#94a3b8" tickFormatter={(v) => `${v}a`}/>
+                    <YAxis tick={{fontSize: 10}} stroke="#94a3b8" tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
+                    <Tooltip formatter={(v, n) => [formatCurrency(v, currency), n === 'place' ? 'Placé' : 'Cash']} contentStyle={{ borderRadius: '8px', border: 'none', fontSize: '12px' }}/>
+                    <Area type="monotone" dataKey="cash" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.2} />
+                    <Area type="monotone" dataKey="place" stroke="#10b981" fill="#10b981" fillOpacity={0.3} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            <p className="text-[10px] text-slate-400 mt-2 italic">
+              Cette simulation suppose un taux fixe et constant. Les rendements réels (notamment crypto/actions) sont volatils. Ceci n'est pas un conseil financier.
+            </p>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       ÉCRAN DE CONNEXION / INSCRIPTION
+       ============================================================ */
+    const LoginScreen = () => {
+      const [mode, setMode] = useState('login'); // 'login' | 'signup'
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [info, setInfo] = useState('');
+
+      const handleSubmit = async () => {
+        setError('');
+        setInfo('');
+        if (!email.trim() || !password) {
+          setError('Email et mot de passe requis.');
+          return;
+        }
+        if (password.length < 6) {
+          setError('Le mot de passe doit faire au moins 6 caractères.');
+          return;
+        }
+        setLoading(true);
+        try {
+          if (mode === 'login') {
+            const { error: err } = await supabaseClient.auth.signInWithPassword({ email: email.trim(), password });
+            if (err) throw err;
+          } else {
+            const { error: err, data } = await supabaseClient.auth.signUp({ email: email.trim(), password });
+            if (err) throw err;
+            if (data.session) {
+              // Connecté directement (confirmation email désactivée)
+            } else {
+              setInfo('Compte créé ! Vérifie ta boîte mail pour confirmer ton adresse avant de te connecter.');
+            }
+          }
+        } catch (e) {
+          const msg = e.message || 'Erreur inconnue';
+          if (msg.includes('Invalid login credentials')) setError('Email ou mot de passe incorrect.');
+          else if (msg.includes('already registered') || msg.includes('already exists')) setError('Un compte existe déjà avec cet email. Essaie de te connecter.');
+          else setError(msg);
+        }
+        setLoading(false);
+      };
+
+      return (
+        <div className="h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="bg-white rounded-xl shadow-lg border border-slate-200 w-full max-w-sm p-6">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center gap-2 text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                <TrendingUp size={26} className="text-blue-600" /> CashFlow Vision
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                {mode === 'login' ? 'Connecte-toi pour accéder à tes données' : 'Crée ton compte personnel'}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+                  className="w-full p-2 border border-slate-300 rounded-lg mt-1"
+                  placeholder="toi@email.com"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase">Mot de passe</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+                  className="w-full p-2 border border-slate-300 rounded-lg mt-1"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {error && (
+                <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 flex items-center gap-2">
+                  <AlertTriangle size={14} className="shrink-0"/> {error}
+                </div>
+              )}
+              {info && (
+                <div className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg p-2 flex items-center gap-2">
+                  <Info size={14} className="shrink-0"/> {info}
+                </div>
+              )}
+
+              <button
+                onClick={handleSubmit}
+                disabled={loading}
+                className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {loading ? <Loader2 size={16}/> : (mode === 'login' ? 'Se connecter' : 'Créer mon compte')}
+              </button>
+            </div>
+
+            <div className="text-center mt-4 text-xs text-slate-500">
+              {mode === 'login' ? (
+                <>Pas encore de compte ? <button onClick={() => { setMode('signup'); setError(''); setInfo(''); }} className="text-blue-600 font-medium hover:underline">Créer un compte</button></>
+              ) : (
+                <>Déjà un compte ? <button onClick={() => { setMode('login'); setError(''); setInfo(''); }} className="text-blue-600 font-medium hover:underline">Se connecter</button></>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    /* ============================================================
+       APP PRINCIPALE
+       ============================================================ */
+    const App = () => {
+      // ---- STATE PRINCIPAL ----
+      const [isLoading, setIsLoading] = useState(true);
+      const [session, setSession] = useState(null);
+      const [authChecked, setAuthChecked] = useState(false);
+
+      /* ----------------------------------------------------------
+         AUTHENTIFICATION SUPABASE
+         Vérifie la session existante au démarrage, puis écoute les
+         changements (connexion/déconnexion) pour rester synchronisé.
+         ---------------------------------------------------------- */
+      useEffect(() => {
+        supabaseClient.auth.getSession().then(({ data }) => {
+          setSession(data.session);
+          setAuthChecked(true);
+        });
+
+        const { data: listener } = supabaseClient.auth.onAuthStateChange((_event, newSession) => {
+          setSession(newSession);
+          if (!newSession) {
+            // Déconnexion : on vide l'état pour ne pas montrer les données du précédent compte
+            setOperations([]);
+            setStartingBalance(0);
+            setAdjustments({});
+            setSavingsAccounts([]);
+            setSavingsAdjustments({});
+            setGoals([]);
+            setIsLoading(true);
+          }
+        });
+
+        return () => listener.subscription.unsubscribe();
+      }, []);
+      const [currency, setCurrency] = useState('EUR');
+      const rate = currency === 'XPF' ? RATE_EUR_XPF : 1;
+      const toView = (val) => val * rate;
+      const fromView = (val) => val / rate;
+
+      // Données métier — un seul "espace", pas de scénarios
+      const [operations, setOperations] = useState([]);
+      const [startingBalance, setStartingBalance] = useState(0);
+      const [adjustments, setAdjustments] = useState({});
+
+      // ---- STATE UI ----
+      const [isFormOpen, setIsFormOpen] = useState(false);
+      const [editingOperation, setEditingOperation] = useState(null);
+      const [isTrackerOpen, setIsTrackerOpen] = useState(false);
+      const [activeTarget, setActiveTarget] = useState(null); // pour PaymentModal
+      const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+      const [historyList, setHistoryList] = useState([]);
+      const [isEditingBalance, setIsEditingBalance] = useState(false);
+      const [activeTab, setActiveTab] = useState('chart');
+      const [searchTerm, setSearchTerm] = useState('');
+      const [filterCategory, setFilterCategory] = useState(null);
+      const [filterTag, setFilterTag] = useState(null);
+      const [showHistory, setShowHistory] = useState(false);
+      const [showAnalytics, setShowAnalytics] = useState(true);
+      
+      // Nouveaux states pour modules avancés
+      const [activeView, setActiveView] = useState('main'); // 'main' | 'yearly' | 'savings' | 'goals'
+      const [criticalAlertSeen, setCriticalAlertSeen] = useState(false);
+      const [criticalThreshold, setCriticalThreshold] = useState(500); // seuil en EUR
+      const [safetyMattress, setSafetyMattress] = useState(3); // mois de dépenses
+      const [savingsAccounts, setSavingsAccounts] = useState([]); // poches d'épargne
+      const [savingsAdjustments, setSavingsAdjustments] = useState({}); // ajustements manuels capital par mois/poche
+      const [editingAccount, setEditingAccount] = useState(null);
+      const [isAccountFormOpen, setIsAccountFormOpen] = useState(false);
+      const [goals, setGoals] = useState([]); // objectifs financiers
+      const [editingGoal, setEditingGoal] = useState(null);
+      const [isGoalFormOpen, setIsGoalFormOpen] = useState(false);
+      // Simulateur What if
+      const [whatIfAmount, setWhatIfAmount] = useState(500);
+      const [whatIfRate, setWhatIfRate] = useState(3);
+      const [whatIfYears, setWhatIfYears] = useState(10);
+      const [whatIfStart, setWhatIfStart] = useState(new Date().toISOString().slice(0, 7));
+      
+      // ---- SIMULATION ----
+      const [isSimulationMode, setIsSimulationMode] = useState(false);
+      const backupState = useRef(null);
+
+      // ---- SAUVEGARDE STATUS ----
+      // 'idle' | 'saving' | 'saved' | 'error' | 'local-only'
+      const [storageStatus, setStorageStatus] = useState('idle');
+      const [lastSaveAt, setLastSaveAt] = useState(null);
+      const [serverTimestamp, setServerTimestamp] = useState(0);
+      const saveDataTimeoutRef = useRef(null);
+      const saveRetryCountRef = useRef(0);
+      const lastSavedPayloadRef = useRef(null);
+      const fileInputRef = useRef(null);
+
+      // ---- MODALES ----
+      const [confirmDialog, setConfirmDialog] = useState(null);
+      const [promptDialog, setPromptDialog] = useState(null);
+      const [toast, setToast] = useState(null);
+      const [pendingImport, setPendingImport] = useState(null); // { operations, startingBalance, adjustments }
+
+      const showToast = useCallback((msg, type = 'info') => {
+        setToast({ msg, type, id: Date.now() });
+      }, []);
+
+      /* ----------------------------------------------------------
+         CHARGEMENT INITIAL
+         Stratégie : Supabase (si connecté) → localStorage en fallback
+         ---------------------------------------------------------- */
+      useEffect(() => {
+        const applyData = (data) => {
+          if (!data) return;
+          const migrated = migrateImportedData(data);
+          setOperations(migrated.operations);
+          setStartingBalance(migrated.startingBalance);
+          setAdjustments(migrated.adjustments);
+          if (data.defaultCurrency === 'XPF' || data.defaultCurrency === 'EUR') {
+            setCurrency(data.defaultCurrency);
+          }
+          if (Array.isArray(data.savingsAccounts)) setSavingsAccounts(data.savingsAccounts);
+          if (data.savingsAdjustments && typeof data.savingsAdjustments === 'object') setSavingsAdjustments(data.savingsAdjustments);
+          if (Array.isArray(data.goals)) setGoals(data.goals);
+          if (typeof data.safetyMattress === 'number') setSafetyMattress(data.safetyMattress);
+          if (typeof data.criticalThreshold === 'number') setCriticalThreshold(data.criticalThreshold);
+        };
+
+        const loadLocalFallback = () => {
+          try {
+            const local = localStorage.getItem('CASHFLOW_DATA_V2');
+            if (local) {
+              const parsed = JSON.parse(local);
+              applyData(parsed);
+              setStorageStatus('local-only');
+              showToast('Données chargées depuis le cache local', 'info');
+              return true;
+            }
+          } catch (e) {
+            console.error('Local fallback failed:', e);
+          }
+          return false;
+        };
+
+        // Pas encore de session = pas connecté, on n'essaie pas de charger
+        if (!session) {
+          setIsLoading(false);
+          return;
+        }
+
+        const loadFromSupabase = async () => {
+          setStorageStatus('saving');
+          try {
+            const { data: rows, error } = await supabaseClient
+              .from('cashflow_data')
+              .select('data, updated_at')
+              .eq('user_id', session.user.id)
+              .order('updated_at', { ascending: false })
+              .limit(1);
+
+            if (error) throw error;
+
+            if (rows && rows.length > 0) {
+              applyData(rows[0].data);
+              setLastSaveAt(new Date(rows[0].updated_at).getTime());
+              setStorageStatus('saved');
+            } else {
+              // Pas encore de ligne pour cet utilisateur : tenter le fallback local (migration depuis GAS export par ex.)
+              if (!loadLocalFallback()) {
+                setStorageStatus('saved'); // vide, mais OK
+              }
+            }
+          } catch (e) {
+            console.error('Supabase load failed:', e);
+            if (!loadLocalFallback()) {
+              setStorageStatus('error');
+              showToast('Impossible de joindre Supabase', 'error');
+            }
+          }
+          setIsLoading(false);
+        };
+
+        loadFromSupabase();
+      }, [session, showToast]);
+
+      /* ----------------------------------------------------------
+         SAUVEGARDE AUTOMATIQUE — robuste avec retry et fallback
+         - Debounce 1.5s
+         - Persistance : Supabase (par utilisateur) + localStorage
+         - Retry x3 avec backoff si erreur réseau
+         - localStorage TOUJOURS écrit en parallèle (filet de sécurité)
+         ---------------------------------------------------------- */
+      const performSave = useCallback((payload, attemptNumber = 1) => {
+        const MAX_ATTEMPTS = 3;
+
+        // 1. Écriture localStorage immédiate et systématique (synchrone)
+        try {
+          localStorage.setItem('CASHFLOW_DATA_V2', payload);
+        } catch (e) {
+          console.error('localStorage failed:', e);
+        }
+
+        // 2. Tentative Supabase si connecté
+        if (!session) {
+          setStorageStatus('local-only');
+          setLastSaveAt(Date.now());
+          return;
+        }
+
+        setStorageStatus('saving');
+        const parsedPayload = JSON.parse(payload);
+
+        const trySave = async () => {
+          try {
+            const { error } = await supabaseClient
+              .from('cashflow_data')
+              .upsert(
+                { user_id: session.user.id, data: parsedPayload, updated_at: new Date().toISOString() },
+                { onConflict: 'user_id' }
+              );
+            if (error) throw error;
+            setStorageStatus('saved');
+            setLastSaveAt(Date.now());
+            saveRetryCountRef.current = 0;
+            lastSavedPayloadRef.current = payload;
+          } catch (e) {
+            console.error(`Save attempt ${attemptNumber} failed:`, e);
+            if (attemptNumber < MAX_ATTEMPTS) {
+              const delay = 1000 * Math.pow(2, attemptNumber);
+              setTimeout(() => performSave(payload, attemptNumber + 1), delay);
+            } else {
+              setStorageStatus('local-only');
+              showToast('Sauvegarde serveur impossible (cache local OK)', 'error');
+            }
+          }
+        };
+        trySave();
+      }, [session, showToast]);
+
+      useEffect(() => {
+        if (isLoading || isSimulationMode) return;
+        
+        const payload = JSON.stringify({
+          operations,
+          startingBalance,
+          adjustments,
+          defaultCurrency: currency,
+          savingsAccounts,
+          savingsAdjustments,
+          goals,
+          safetyMattress,
+          criticalThreshold,
+          version: '3.0',
+          lastModifiedAt: Date.now()
+        });
+
+        // Ne rien faire si rien n'a changé
+        if (payload === lastSavedPayloadRef.current) return;
+
+        if (saveDataTimeoutRef.current) clearTimeout(saveDataTimeoutRef.current);
+        setStorageStatus('saving');
+        saveDataTimeoutRef.current = setTimeout(() => {
+          performSave(payload);
+        }, 1500);
+
+        return () => clearTimeout(saveDataTimeoutRef.current);
+      }, [operations, startingBalance, adjustments, currency, savingsAccounts, savingsAdjustments, goals, safetyMattress, criticalThreshold, isLoading, isSimulationMode, session, performSave]);
+
+      /* ----------------------------------------------------------
+         SAUVEGARDE FORCÉE (bouton manuel)
+         ---------------------------------------------------------- */
+      const handleForceSave = () => {
+        const payload = JSON.stringify({
+          operations,
+          startingBalance,
+          adjustments,
+          defaultCurrency: currency,
+          savingsAccounts,
+          savingsAdjustments,
+          goals,
+          safetyMattress,
+          criticalThreshold,
+          version: '3.0',
+          lastModifiedAt: Date.now()
+        });
+        performSave(payload);
+        showToast('Sauvegarde forcée', 'info');
+      };
+
+      /* ----------------------------------------------------------
+         OPÉRATIONS CRUD
+         ---------------------------------------------------------- */
+      const handleSaveOperation = (op) => {
+        setOperations(prev => {
+          const exists = prev.some(o => o.id === op.id);
+          return exists ? prev.map(o => o.id === op.id ? op : o) : [...prev, op];
+        });
+        setEditingOperation(null);
+        setIsFormOpen(false);
+      };
+
+      const handleDeleteOperation = (id) => {
+        setConfirmDialog({
+          title: 'Supprimer l\'opération ?',
+          message: 'Cette action ne peut pas être annulée.',
+          danger: true,
+          confirmText: 'Supprimer',
+          onConfirm: () => {
+            setOperations(prev => prev.filter(o => o.id !== id));
+            setIsFormOpen(false);
+            setConfirmDialog(null);
+            showToast('Opération supprimée', 'success');
+          }
+        });
+      };
+
+      const handleDuplicateOperation = (op) => {
+        const copy = {
+          ...op,
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 9),
+          label: op.label + ' (copie)'
+        };
+        setOperations(prev => [...prev, copy]);
+        setEditingOperation(copy);
+        showToast('Opération dupliquée — modifie la copie', 'success');
+      };
+
+      // Comptes d'épargne
+      const handleSaveAccount = (acc) => {
+        setSavingsAccounts(prev => {
+          const exists = prev.some(a => a.id === acc.id);
+          return exists ? prev.map(a => a.id === acc.id ? acc : a) : [...prev, acc];
+        });
+        setIsAccountFormOpen(false);
+        setEditingAccount(null);
+        showToast('Poche enregistrée', 'success');
+      };
+      const handleDeleteAccount = (id) => {
+        setConfirmDialog({
+          title: 'Supprimer cette poche ?',
+          message: 'Cette action ne peut pas être annulée.',
+          danger: true,
+          confirmText: 'Supprimer',
+          onConfirm: () => {
+            setSavingsAccounts(prev => prev.filter(a => a.id !== id));
+            setIsAccountFormOpen(false);
+            setEditingAccount(null);
+            setConfirmDialog(null);
+            showToast('Poche supprimée', 'success');
+          }
+        });
+      };
+
+      // Objectifs
+      const handleSaveGoal = (g) => {
+        setGoals(prev => {
+          const exists = prev.some(x => x.id === g.id);
+          return exists ? prev.map(x => x.id === g.id ? g : x) : [...prev, g];
+        });
+        setIsGoalFormOpen(false);
+        setEditingGoal(null);
+        showToast('Objectif enregistré', 'success');
+      };
+      const handleDeleteGoal = (id) => {
+        setConfirmDialog({
+          title: 'Supprimer cet objectif ?',
+          message: 'Cette action ne peut pas être annulée.',
+          danger: true,
+          confirmText: 'Supprimer',
+          onConfirm: () => {
+            setGoals(prev => prev.filter(x => x.id !== id));
+            setIsGoalFormOpen(false);
+            setEditingGoal(null);
+            setConfirmDialog(null);
+            showToast('Objectif supprimé', 'success');
+          }
+        });
+      };
+
+      const handleAdjustment = (monthKey, value) => {
+        setAdjustments(prev => {
+          const next = { ...prev };
+          if (value === undefined) delete next[monthKey];
+          else next[monthKey] = fromView(value);
+          return next;
+        });
+      };
+
+      const handleSavingsAdjustment = (monthKey, accId, value) => {
+        setSavingsAdjustments(prev => {
+          const next = { ...prev };
+          const monthObj = { ...(next[monthKey] || {}) };
+          if (value === undefined || value === null) {
+            delete monthObj[accId];
+          } else {
+            monthObj[accId] = fromView(value);
+          }
+          if (Object.keys(monthObj).length === 0) {
+            delete next[monthKey];
+          } else {
+            next[monthKey] = monthObj;
+          }
+          return next;
+        });
+      };
+
+      /* ----------------------------------------------------------
+         PILOTAGE DU MOIS (actions)
+         ---------------------------------------------------------- */
+      const handleTrackerAction = (op, monthKey, action) => {
+        if (action === 'OPEN_MODAL') {
+          setActiveTarget({ op, monthKey });
+          return;
+        }
+        const opDateStr = `${monthKey}-01`;
+        let newOps = [...operations];
+
+        if (action === 'CANCEL') {
+          newOps.push({
+            id: Date.now().toString() + '_SKIP',
+            label: `Annulé: ${op.label}`,
+            amount: -op.amount,
+            type: op.type,
+            frequency: Frequency.ONCE,
+            date: opDateStr,
+            category: op.category || DEFAULT_CATEGORY,
+            tags: op.tags || []
+          });
+          showToast(`"${op.label}" marqué comme annulé`, 'success');
+        } else if (action === 'PAY_EXACT') {
+          newOps.push(
+            {
+              id: Date.now().toString() + '_REAL',
+              label: `✅ ${op.label}`,
+              amount: op.amount,
+              type: op.type,
+              frequency: Frequency.ONCE,
+              date: new Date().toISOString().slice(0, 10),
+              category: op.category || DEFAULT_CATEGORY,
+              tags: op.tags || []
+            },
+            {
+              id: Date.now().toString() + '_OFF',
+              label: `Ajustement: ${op.label}`,
+              amount: -op.amount,
+              type: op.type,
+              frequency: Frequency.ONCE,
+              date: opDateStr,
+              category: op.category || DEFAULT_CATEGORY,
+              tags: op.tags || []
+            }
+          );
+          showToast(`"${op.label}" marqué comme payé`, 'success');
+        }
+        setOperations(newOps);
+      };
+
+      const handlePaymentConfirm = (data) => {
+        if (!activeTarget) return;
+        const { op, monthKey } = activeTarget;
+        const newOps = [...operations];
+        const baseCat = op.category || DEFAULT_CATEGORY;
+        const baseTags = op.tags || [];
+        const ts = Date.now().toString();
+
+        // 1. Dépense/recette réelle (cash flow réel)
+        newOps.push({
+          id: ts + '_PAY',
+          label: data.mode === 'ADVANCE' ? `Acompte: ${op.label}` : `✅ ${op.label} (Solde)`,
+          amount: data.amount,
+          type: op.type,
+          frequency: Frequency.ONCE,
+          date: data.date,
+          category: baseCat,
+          tags: baseTags
+        });
+
+        // 2. Régularisation selon le mode
+        if (data.mode === 'FINAL') {
+          // Annule la prévision du mois (régularisation)
+          newOps.push({
+            id: ts + '_CLOSE',
+            label: `Clôture: ${op.label}`,
+            amount: -op.amount,
+            type: op.type,
+            frequency: Frequency.ONCE,
+            date: `${monthKey}-01`,
+            category: baseCat,
+            tags: baseTags
+          });
+        } else if (data.mode === 'ADVANCE') {
+          // Déduit l'acompte du mois cible
+          newOps.push({
+            id: ts + '_ADV_OFF',
+            label: `Déduction Acompte (${op.label})`,
+            amount: -data.amount,
+            type: op.type,
+            frequency: Frequency.ONCE,
+            date: `${data.targetMonth}-01`,
+            category: baseCat,
+            tags: baseTags
+          });
+        }
+
+        setOperations(newOps);
+        setActiveTarget(null);
+        showToast(data.mode === 'ADVANCE' ? 'Acompte enregistré' : 'Paiement clôturé', 'success');
+      };
+
+      /* ----------------------------------------------------------
+         SIMULATION
+         ---------------------------------------------------------- */
+      const toggleSimulationMode = () => {
+        if (isSimulationMode) {
+          if (backupState.current) {
+            setOperations(backupState.current.operations);
+            setStartingBalance(backupState.current.startingBalance);
+            setAdjustments(backupState.current.adjustments);
+            backupState.current = null;
+          }
+          setIsSimulationMode(false);
+          showToast('Simulation quittée, données restaurées', 'info');
+        } else {
+          backupState.current = {
+            operations: [...operations],
+            startingBalance,
+            adjustments: { ...adjustments }
+          };
+          setIsSimulationMode(true);
+          showToast('Mode simulation activé', 'info');
+        }
+      };
+
+      /* ----------------------------------------------------------
+         EXPORT / IMPORT
+         ---------------------------------------------------------- */
+      const handleExport = () => {
+        const data = {
+          operations,
+          startingBalance,
+          adjustments,
+          defaultCurrency: currency,
+          savingsAccounts,
+          savingsAdjustments,
+          goals,
+          safetyMattress,
+          criticalThreshold,
+          version: '2.2',
+          exportDate: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `cashflow_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('Export téléchargé', 'success');
+      };
+
+      const handleExportCSV = () => {
+        const rows = [['Libellé', 'Montant EUR', 'Type', 'Fréquence', 'Catégorie', 'Tags', 'Date/Début', 'Fin']];
+        operations.forEach(op => {
+          if (isTechnicalOperation(op)) return;
+          rows.push([
+            op.label,
+            op.amount,
+            op.type,
+            op.frequency,
+            CATEGORIES[op.category]?.label || op.category || '',
+            (op.tags || []).join(';'),
+            op.date || op.startDate || '',
+            op.endDate || ''
+          ]);
+        });
+        const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `cashflow_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('Export CSV téléchargé', 'success');
+      };
+
+      const handleImportClick = () => { fileInputRef.current?.click(); };
+
+      const handleImportFile = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const raw = JSON.parse(e.target.result);
+            const migrated = migrateImportedData(raw);
+            if (!migrated.operations || migrated.operations.length === 0) {
+              showToast('Aucune opération trouvée dans le fichier', 'error');
+              return;
+            }
+            setPendingImport(migrated);
+          } catch (err) {
+            showToast('Fichier invalide : ' + err.message, 'error');
+          }
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+      };
+
+      const handleConfirmImport = (operationsValidated, newDefaultCurrency) => {
+        if (!pendingImport) return;
+        setOperations(operationsValidated);
+        setStartingBalance(pendingImport.startingBalance);
+        setAdjustments(pendingImport.adjustments);
+        if (newDefaultCurrency) setCurrency(newDefaultCurrency);
+        setPendingImport(null);
+        showToast(`${operationsValidated.length} opérations importées`, 'success');
+      };
+
+      /* ----------------------------------------------------------
+         HISTORIQUE
+         Non disponible dans cette version Supabase (sera ajouté si besoin).
+         La sauvegarde reste sécurisée par le triple filet localStorage + Supabase.
+         ---------------------------------------------------------- */
+      const handleOpenHistory = () => {
+        showToast('Historique des versions non disponible dans cette version. Utilise Export régulièrement pour garder des sauvegardes.', 'info');
+      };
+
+      /* ----------------------------------------------------------
+         RESET
+         ---------------------------------------------------------- */
+      const handleResetAll = () => {
+        setConfirmDialog({
+          title: '⚠️ Tout effacer ?',
+          message: 'Cette action supprimera TOUTES tes opérations, ton solde et tes ajustements. Exporte d\'abord si tu veux garder une trace.',
+          danger: true,
+          confirmText: 'Effacer tout',
+          onConfirm: () => {
+            setOperations([]);
+            setStartingBalance(0);
+            setAdjustments({});
+            setConfirmDialog(null);
+            showToast('Tout a été effacé', 'success');
+          }
+        });
+      };
+
+      /* ----------------------------------------------------------
+         CALCULS DÉRIVÉS
+         ---------------------------------------------------------- */
+      const baseForecast = useMemo(
+        () => calculateForecast(startingBalance, operations, adjustments, savingsAccounts, savingsAdjustments),
+        [startingBalance, operations, adjustments, savingsAccounts, savingsAdjustments]
+      );
+
+      const displayedForecast = useMemo(() => {
+        if (currency === 'EUR') return baseForecast;
+        return baseForecast.map(m => ({
+          ...m,
+          startBalance: toView(m.startBalance),
+          totalIncome: toView(m.totalIncome),
+          totalExpense: toView(m.totalExpense),
+          theoreticalEndBalance: toView(m.theoreticalEndBalance),
+          adjustedEndBalance: m.adjustedEndBalance !== null ? toView(m.adjustedEndBalance) : null,
+          finalEndBalance: toView(m.finalEndBalance),
+          safeMargin: toView(m.safeMargin),
+          savingsDeposit: toView(m.savingsDeposit || 0),
+          savingsCapital: toView(m.savingsCapital || 0),
+          patrimoine: toView(m.patrimoine || 0),
+          accountsActivity: (m.accountsActivity || []).map(a => ({
+            ...a,
+            deposit: toView(a.deposit),
+            interest: toView(a.interest),
+            newBalance: toView(a.newBalance)
+          })),
+          activeOperations: m.activeOperations.map(op => ({ ...op, amount: toView(op.amount) }))
+        }));
+      }, [baseForecast, currency]);
+
+      const minBalance = Math.min(...displayedForecast.map(f => f.finalEndBalance));
+      const currentMonthData = displayedForecast[0] || { finalEndBalance: 0 };
+
+      // Filtres avancés sur les opérations
+      const { mainOps, historyOps, allTags } = useMemo(() => {
+        let all = operations;
+        if (searchTerm) {
+          const lower = searchTerm.toLowerCase();
+          all = all.filter(op => op.label.toLowerCase().includes(lower) || (op.tags || []).some(t => t.toLowerCase().includes(lower)));
+        }
+        if (filterCategory) {
+          all = all.filter(op => (op.category || DEFAULT_CATEGORY) === filterCategory);
+        }
+        if (filterTag) {
+          all = all.filter(op => (op.tags || []).includes(filterTag));
+        }
+        const main = all.filter(op => !isTechnicalOperation(op));
+        const history = all.filter(op => isTechnicalOperation(op));
+        
+        const tagSet = new Set();
+        operations.forEach(op => (op.tags || []).forEach(t => tagSet.add(t)));
+
+        return {
+          mainOps: main.sort((a, b) => b.amount - a.amount),
+          historyOps: history.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+          allTags: Array.from(tagSet).sort()
+        };
+      }, [operations, searchTerm, filterCategory, filterTag]);
+
+      // Capacité d'épargne LISSÉE (toutes ops récurrentes ramenées au mois, sans filtre date)
+      const savingsCapacityLisse = useMemo(() => {
+        let income = 0, expense = 0;
+        operations.forEach(op => {
+          if (isTechnicalOperation(op)) return;
+          if (op.frequency === Frequency.ONCE) return;
+          let amount = op.amount;
+          if (op.frequency === Frequency.QUARTERLY) amount /= 3;
+          if (op.frequency === Frequency.ANNUAL) amount /= 12;
+          if (op.type === OperationType.INCOME) income += amount;
+          else expense += amount;
+        });
+        return toView(income - expense);
+      }, [operations, currency]);
+
+      // Capacité d'épargne ACTUELLE (ops récurrentes actives ce mois précis uniquement)
+      const savingsCapacityNow = useMemo(() => {
+        const now = new Date();
+        const currentYM = generateMonthKey(now);
+        let income = 0, expense = 0;
+        operations.forEach(op => {
+          if (isTechnicalOperation(op)) return;
+          if (op.frequency === Frequency.ONCE) return;
+          if (!op.startDate) return;
+          try {
+            const opStart = parseDateLocal(op.startDate);
+            const opEnd = op.endDate ? parseDateLocal(op.endDate) : null;
+            const startYM = generateMonthKey(opStart);
+            const endYM = opEnd ? generateMonthKey(opEnd) : null;
+            if (currentYM < startYM) return;
+            if (endYM && currentYM > endYM) return;
+            let amount = op.amount;
+            if (op.frequency === Frequency.QUARTERLY) amount /= 3;
+            if (op.frequency === Frequency.ANNUAL) amount /= 12;
+            if (op.type === OperationType.INCOME) income += amount;
+            else expense += amount;
+          } catch (e) { /* skip */ }
+        });
+        return toView(income - expense);
+      }, [operations, currency]);
+
+      // Compatibilité avec ancien code
+      const savingsCapacity = savingsCapacityLisse;
+
+      // Épargne effective du mois courant (revenus - dépenses incluant ponctuels)
+      const currentMonthSavings = useMemo(() => {
+        if (!displayedForecast || !displayedForecast[0]) return 0;
+        return displayedForecast[0].totalIncome - displayedForecast[0].totalExpense;
+      }, [displayedForecast]);
+
+      // Vue annuelle agrégée
+      const yearlyAggregates = useMemo(() => {
+        if (!baseForecast) return [];
+        const years = {};
+        baseForecast.forEach(m => {
+          const [y] = m.monthKey.split('-');
+          if (!years[y]) {
+            years[y] = { 
+              year: y, 
+              totalIncome: 0, 
+              totalExpense: 0, 
+              startBalance: m.startBalance,
+              endBalance: m.finalEndBalance 
+            };
+          }
+          years[y].totalIncome += m.totalIncome;
+          years[y].totalExpense += m.totalExpense;
+          years[y].endBalance = m.finalEndBalance;
+        });
+        return Object.values(years).map(y => ({
+          ...y,
+          totalIncome: toView(y.totalIncome),
+          totalExpense: toView(y.totalExpense),
+          startBalance: toView(y.startBalance),
+          endBalance: toView(y.endBalance),
+          netSavings: toView(y.totalIncome - y.totalExpense)
+        }));
+      }, [baseForecast, currency]);
+
+      // Top 5 fuites (catégories les plus coûteuses, lissé mensuel)
+      const top5Leaks = useMemo(() => {
+        const totals = {};
+        operations.forEach(op => {
+          if (isTechnicalOperation(op)) return;
+          if (op.type !== OperationType.EXPENSE) return;
+          if (op.frequency === Frequency.ONCE) return;
+          let amount = op.amount;
+          if (op.frequency === Frequency.QUARTERLY) amount /= 3;
+          if (op.frequency === Frequency.ANNUAL) amount /= 12;
+          const cat = op.category || DEFAULT_CATEGORY;
+          totals[cat] = (totals[cat] || 0) + amount;
+        });
+        const totalExpense = Object.values(totals).reduce((s, v) => s + v, 0);
+        return Object.entries(totals)
+          .map(([catId, val]) => ({
+            catId,
+            cat: CATEGORIES[catId] || CATEGORIES.AUTRE,
+            value: toView(val),
+            pct: totalExpense > 0 ? Math.round(val / totalExpense * 100) : 0
+          }))
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 5);
+      }, [operations, currency]);
+
+      // Comparaison N vs N-1 par catégorie
+      const yearComparison = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const prevYear = currentYear - 1;
+        const byYearCat = { [currentYear]: {}, [prevYear]: {} };
+        
+        if (!baseForecast) return { current: currentYear, previous: prevYear, data: [] };
+        
+        baseForecast.forEach(m => {
+          const [y] = m.monthKey.split('-');
+          const yearNum = parseInt(y);
+          if (yearNum !== currentYear && yearNum !== prevYear) return;
+          m.activeOperations.forEach(op => {
+            if (isTechnicalOperation(op)) return;
+            if (op.type !== OperationType.EXPENSE) return;
+            const cat = op.category || DEFAULT_CATEGORY;
+            byYearCat[yearNum][cat] = (byYearCat[yearNum][cat] || 0) + op.amount;
+          });
+        });
+
+        const allCats = new Set([...Object.keys(byYearCat[currentYear]), ...Object.keys(byYearCat[prevYear])]);
+        const data = Array.from(allCats).map(cat => {
+          const curr = byYearCat[currentYear][cat] || 0;
+          const prev = byYearCat[prevYear][cat] || 0;
+          return {
+            catId: cat,
+            cat: CATEGORIES[cat] || CATEGORIES.AUTRE,
+            current: toView(curr),
+            previous: toView(prev),
+            delta: curr - prev,
+            pctChange: prev > 0 ? ((curr - prev) / prev * 100) : (curr > 0 ? 100 : 0)
+          };
+        }).sort((a, b) => b.current - a.current);
+
+        return { current: currentYear, previous: prevYear, data };
+      }, [baseForecast, currency]);
+
+      // Détection point bas critique dans les 6 prochains mois
+      const criticalPointBas = useMemo(() => {
+        if (!displayedForecast) return null;
+        const next6 = displayedForecast.slice(0, 6);
+        const min = next6.reduce((m, c) => c.finalEndBalance < m.finalEndBalance ? c : m, next6[0]);
+        return min;
+      }, [displayedForecast]);
+
+      const getFrequencyLabel = (op) => {
+        if (op.frequency === Frequency.ONCE) return `Le ${op.date}`;
+        if (op.frequency === Frequency.QUARTERLY) return 'Trimestriel';
+        if (op.frequency === Frequency.ANNUAL) return 'Annuel';
+        return 'Mensuel';
+      };
+
+      // Tant qu'on n'a pas vérifié la session, écran neutre (évite un flash du login screen)
+      if (!authChecked) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-slate-50 text-blue-600 flex-col gap-4">
+            <Loader2 size={48} />
+          </div>
+        );
+      }
+
+      // Pas connecté : écran de login/signup
+      if (!session) {
+        return <LoginScreen />;
+      }
+
+      if (isLoading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-slate-50 text-blue-600 flex-col gap-4">
+            <Loader2 size={48} />
+            <div className="font-medium text-slate-500">Chargement de vos données...</div>
+          </div>
+        );
+      }
+
+      /* ----------------------------------------------------------
+         RENDU UI
+         ---------------------------------------------------------- */
+      return (
+        <div className="h-screen flex flex-col md:flex-row bg-slate-50 font-sans text-slate-900 overflow-hidden">
+          {/* MOBILE NAV */}
+          <div className="md:hidden flex shrink-0 bg-white border-t border-slate-200 fixed bottom-0 left-0 right-0 z-50 h-16 pb-safe">
+            <button onClick={() => setActiveTab('chart')} className={`flex-1 flex flex-col items-center justify-center ${activeTab === 'chart' ? 'text-blue-600' : 'text-slate-400'}`}>
+              <TrendingUp size={20}/><span className="text-[10px] mt-1 font-medium">Vision</span>
+            </button>
+            <button onClick={() => setActiveTab('ops')} className={`flex-1 flex flex-col items-center justify-center ${activeTab === 'ops' ? 'text-blue-600' : 'text-slate-400'}`}>
+              <Settings size={20}/><span className="text-[10px] mt-1 font-medium">Opérations</span>
+            </button>
+            <div className="absolute -top-6 left-1/2 -translate-x-1/2">
+              <button onClick={() => { setEditingOperation(null); setIsFormOpen(true); }} className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-lg shadow-blue-200 flex items-center justify-center hover:scale-105 transition-transform">
+                <Plus size={28}/>
+              </button>
+            </div>
+          </div>
+
+          {/* SIDEBAR */}
+          <aside className={`bg-white border-r border-slate-200 flex-col md:flex h-full md:w-[360px] md:relative fixed inset-0 z-40 transition-transform duration-300 ${activeTab === 'ops' ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+            <div className="p-6 border-b border-slate-100 hidden md:flex justify-between items-center">
+              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent flex items-center gap-2">
+                <TrendingUp size={24} className="text-blue-600" /> CashFlow Vision
+              </h1>
+              <div className="flex gap-1">
+                <button onClick={handleExport} title="Exporter JSON" className="p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-blue-600"><Download size={18} /></button>
+                <button onClick={handleImportClick} title="Importer JSON" className="p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-emerald-600"><Upload size={18} /></button>
+                <input type="file" ref={fileInputRef} onChange={handleImportFile} className="hidden" accept=".json" />
+              </div>
+            </div>
+
+            {/* COMPTE CONNECTÉ */}
+            <div className="px-6 py-2 hidden md:flex items-center justify-between bg-slate-50 border-b border-slate-100">
+              <span className="text-[10px] text-slate-400 truncate flex-1" title={session.user.email}>
+                {session.user.email}
+              </span>
+              <button 
+                onClick={() => {
+                  setConfirmDialog({
+                    title: 'Se déconnecter ?',
+                    message: 'Tu pourras te reconnecter à tout moment avec ton email et ton mot de passe.',
+                    confirmText: 'Se déconnecter',
+                    onConfirm: async () => {
+                      setConfirmDialog(null);
+                      await supabaseClient.auth.signOut();
+                    }
+                  });
+                }}
+                className="text-[10px] text-slate-400 hover:text-rose-600 font-medium ml-2 shrink-0"
+              >
+                Déconnexion
+              </button>
+            </div>
+
+            {/* STATUS DE SAUVEGARDE */}
+            <div 
+              onClick={handleForceSave}
+              title="Cliquer pour forcer une sauvegarde"
+              className={`text-[10px] px-6 py-1.5 font-bold uppercase tracking-wider flex items-center justify-between cursor-pointer hover:brightness-95 transition-all ${
+                storageStatus === 'saved' ? 'text-emerald-600 bg-emerald-50' :
+                storageStatus === 'saving' ? 'text-blue-600 bg-blue-50' :
+                storageStatus === 'local-only' ? 'text-amber-600 bg-amber-50' :
+                storageStatus === 'error' ? 'text-rose-600 bg-rose-50' : 'text-slate-500 bg-slate-50'
+              }`}
+            >
+              <span className="flex items-center gap-1">
+                {storageStatus === 'saved' && <Cloud size={12}/>}
+                {storageStatus === 'saving' && <Loader2 size={12}/>}
+                {storageStatus === 'local-only' && <HardDrive size={12}/>}
+                {storageStatus === 'error' && <CloudOff size={12}/>}
+                {storageStatus === 'saved' ? 'Sauvegardé (Drive)' :
+                 storageStatus === 'saving' ? 'Sauvegarde...' :
+                 storageStatus === 'local-only' ? 'Local uniquement' :
+                 storageStatus === 'error' ? 'Erreur réseau' : 'Inactif'}
+              </span>
+              <span className="text-[9px] opacity-70">{formatRelativeTime(lastSaveAt)}</span>
+            </div>
+
+            {/* OUTILS PRINCIPAUX */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-2">
+              <button onClick={() => setIsTrackerOpen(true)} className="w-full py-2.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-semibold shadow-sm hover:border-indigo-400 hover:text-indigo-600 flex items-center justify-center gap-2 transition-all text-sm">
+                <CalendarCheck size={16} /> Pilotage du Mois
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={handleExport} className="py-2 bg-white border border-slate-300 rounded-lg text-slate-600 text-xs font-medium hover:border-blue-400 hover:text-blue-600 flex items-center justify-center gap-1">
+                  <Download size={12}/> Export JSON
+                </button>
+                <button onClick={handleExportCSV} className="py-2 bg-white border border-slate-300 rounded-lg text-slate-600 text-xs font-medium hover:border-emerald-400 hover:text-emerald-600 flex items-center justify-center gap-1">
+                  <Download size={12}/> CSV
+                </button>
+              </div>
+            </div>
+
+            {/* SIMULATION MODE */}
+            <div className={`p-3 mx-4 mt-3 rounded-xl transition-all border ${isSimulationMode ? 'bg-amber-50 border-amber-200 sim-active' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className={`text-xs font-bold uppercase ${isSimulationMode ? 'text-amber-700' : 'text-slate-500'}`}>
+                  {isSimulationMode ? 'Mode Simulation' : 'Outils'}
+                </span>
+                <FlaskConical size={14} className={isSimulationMode ? 'text-amber-600' : 'text-slate-400'} />
+              </div>
+              {isSimulationMode ? (
+                <div>
+                  <p className="text-[10px] text-amber-700 mb-2">Modifications non sauvegardées. Tester en sécurité.</p>
+                  <button onClick={toggleSimulationMode} className="w-full py-2 bg-amber-600 text-white text-xs font-bold rounded-lg shadow-sm hover:bg-amber-700 flex items-center justify-center gap-1">
+                    <PowerOff size={12} /> Quitter & Restaurer
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <button onClick={toggleSimulationMode} className="w-full py-1.5 bg-white border border-slate-300 text-slate-600 text-xs font-medium rounded-lg hover:border-blue-400 hover:text-blue-600 flex items-center justify-center gap-1">
+                    <FlaskConical size={12} /> Lancer le Simulateur
+                  </button>
+                  <button onClick={handleResetAll} className="w-full py-1 bg-slate-50 border border-slate-200 text-slate-400 text-[10px] font-medium rounded-lg hover:border-rose-200 hover:text-rose-500 hover:bg-rose-50 flex items-center justify-center gap-1">
+                    <Trash2 size={10} /> Tout effacer
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* SOLDE INITIAL */}
+            <div className="p-6 bg-transparent">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block">Solde Actuel</label>
+              {isEditingBalance ? (
+                <input 
+                  autoFocus type="number" 
+                  className="w-full text-2xl font-bold text-slate-800 bg-white border rounded px-2 py-1 outline-blue-500" 
+                  value={Math.round(toView(startingBalance))} 
+                  onChange={e => {
+                    const newVal = fromView(parseFloat(e.target.value) || 0);
+                    setStartingBalance(newVal);
+                    // Supprimer l'ajustement du mois courant s'il existe, sinon le solde n'apparaît pas
+                    const currentMK = generateMonthKey(new Date());
+                    setAdjustments(prev => {
+                      if (prev[currentMK] === undefined) return prev;
+                      const next = { ...prev };
+                      delete next[currentMK];
+                      return next;
+                    });
+                  }} 
+                  onBlur={() => setIsEditingBalance(false)} 
+                />
+              ) : (
+                <div onClick={() => setIsEditingBalance(true)} className="text-3xl font-bold text-slate-800 cursor-pointer hover:text-blue-600 flex items-center gap-2">
+                  {formatCurrency(toView(startingBalance), currency)}
+                  <Edit2 size={12} className="opacity-30" />
+                </div>
+              )}
+            </div>
+
+            {/* RECHERCHE */}
+            <div className="px-4 pt-2">
+              <div className="relative">
+                <input 
+                  type="text" placeholder="Rechercher..." 
+                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)} 
+                />
+                <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+              </div>
+            </div>
+
+            {/* FILTRES PAR CATÉGORIE */}
+            <div className="px-4 pt-3">
+              <div className="flex flex-wrap gap-1">
+                <button 
+                  onClick={() => setFilterCategory(null)} 
+                  className={`text-[10px] px-2 py-1 rounded-full font-medium ${!filterCategory ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  Toutes
+                </button>
+                {CATEGORY_LIST.map(cat => {
+                  const count = operations.filter(op => (op.category || DEFAULT_CATEGORY) === cat.id && !isTechnicalOperation(op)).length;
+                  if (count === 0) return null;
+                  const isActive = filterCategory === cat.id;
+                  return (
+                    <button 
+                      key={cat.id}
+                      onClick={() => setFilterCategory(isActive ? null : cat.id)}
+                      className="text-[10px] px-2 py-1 rounded-full font-medium flex items-center gap-1 border transition-all"
+                      style={isActive ? { backgroundColor: cat.color, color: 'white', borderColor: cat.color } : { backgroundColor: cat.color + '15', color: cat.color, borderColor: 'transparent' }}
+                    >
+                      <span>{cat.icon}</span> {count}
+                    </button>
+                  );
+                })}
+              </div>
+              {filterTag && (
+                <div className="mt-2 flex items-center gap-1">
+                  <span className="text-[10px] text-slate-400">Tag:</span>
+                  <button onClick={() => setFilterTag(null)} className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 flex items-center gap-1">
+                    {filterTag} <X size={10}/>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* LISTE D'OPÉRATIONS */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-24 md:pb-4">
+              {operations.length === 0 && (
+                <div className="text-center py-8 text-slate-400 text-sm italic">
+                  Ajoutez votre première opération ou importez votre JSON.
+                </div>
+              )}
+              {operations.length > 0 && mainOps.length === 0 && historyOps.length === 0 && (
+                <div className="text-center py-8 text-slate-400 text-sm italic">Aucun résultat</div>
+              )}
+
+              {mainOps.map(op => (
+                <div 
+                  key={op.id} 
+                  onClick={() => { setEditingOperation(op); setIsFormOpen(true); }} 
+                  className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm hover:shadow-md hover:border-blue-200 cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-700 text-sm truncate">{op.label}</div>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <CategoryChip catId={op.category || DEFAULT_CATEGORY} size="xs"/>
+                      <span className="text-[10px] text-slate-400">{getFrequencyLabel(op)}</span>
+                      {(op.tags || []).slice(0, 2).map(t => (
+                        <button 
+                          key={t}
+                          onClick={(e) => { e.stopPropagation(); setFilterTag(t); }}
+                          className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
+                        >
+                          #{t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={`text-sm font-bold ml-2 shrink-0 ${op.type === OperationType.INCOME ? 'text-emerald-600' : 'text-slate-700'}`}>
+                    {op.type === OperationType.INCOME ? '+' : '-'}{Math.round(toView(op.amount))}
+                  </div>
+                </div>
+              ))}
+
+              {/* HISTORIQUE (opérations techniques) */}
+              {historyOps.length > 0 && (
+                <div className="pt-3 mt-3 border-t border-slate-200">
+                  <button onClick={() => setShowHistory(!showHistory)} className="flex items-center justify-between w-full text-xs font-bold text-slate-400 uppercase hover:text-slate-600 py-2">
+                    <span className="flex items-center gap-2"><History size={12}/> Technique ({historyOps.length})</span>
+                    {showHistory ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+                  </button>
+                  {showHistory && (
+                    <div className="mt-2 space-y-1 animate-in">
+                      {historyOps.map(op => (
+                        <div key={op.id} onClick={() => { setEditingOperation(op); setIsFormOpen(true); }} className="flex justify-between items-center p-2 bg-slate-50/50 rounded border border-slate-100 hover:bg-white cursor-pointer opacity-80 hover:opacity-100">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-slate-600 text-xs truncate">{op.label}</div>
+                            <div className="text-[10px] text-slate-400">{getFrequencyLabel(op)}</div>
+                          </div>
+                          <div className={`text-xs font-bold ${op.type === OperationType.INCOME ? 'text-emerald-600' : 'text-slate-500'}`}>
+                            {op.type === OperationType.INCOME ? '+' : '-'}{Math.round(toView(op.amount))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-200 hidden md:block">
+              <button 
+                onClick={() => { setEditingOperation(null); setIsFormOpen(true); }} 
+                className={`w-full py-3 text-white rounded-lg shadow-lg flex items-center justify-center gap-2 font-medium transition-colors ${isSimulationMode ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}
+              >
+                <Plus size={20} /> Nouvelle Opération
+              </button>
+            </div>
+          </aside>
+
+          {/* MAIN */}
+          <main className={`flex-1 flex flex-col h-full overflow-hidden relative transition-transform duration-300 ${activeTab === 'chart' ? 'translate-x-0' : 'translate-x-full md:translate-x-0 hidden md:flex'}`}>
+            <header className={`h-auto md:h-16 border-b flex flex-col md:flex-row md:items-center px-4 md:px-8 py-3 md:py-0 justify-between shrink-0 z-20 gap-3 ${isSimulationMode ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}>
+              <div className="md:hidden font-bold text-lg flex items-center justify-between w-full">
+                <div className={`flex items-center gap-2 ${isSimulationMode ? 'text-amber-700' : 'text-blue-600'}`}>
+                  {isSimulationMode ? <FlaskConical size={20}/> : <TrendingUp size={20}/>}
+                  {isSimulationMode ? 'SIMULATION' : 'CashFlow'}
+                </div>
+                <button onClick={() => setCurrency(c => c === 'EUR' ? 'XPF' : 'EUR')} className="bg-white border border-slate-200 shadow-sm px-2 py-1 rounded text-xs font-bold text-slate-600 flex items-center gap-1">
+                  <Coins size={12}/> {currency}
+                </button>
+              </div>
+
+              {isSimulationMode && (
+                <div className="hidden md:flex items-center gap-2 text-amber-700 font-bold bg-amber-100 px-3 py-1 rounded-full text-xs uppercase tracking-wide animate-pulse">
+                  <FlaskConical size={14}/> Simulation Active
+                </div>
+              )}
+
+              <div className="flex items-center gap-4 w-full md:w-auto">
+                <div className="flex justify-between w-full md:w-auto md:gap-8">
+                  <div>
+                    <div className="text-[10px] md:text-xs text-slate-400 uppercase">Solde fin de mois</div>
+                    <div className={`font-bold text-base md:text-lg ${currentMonthData.finalEndBalance < 0 ? 'text-rose-600' : 'text-slate-800'}`}>
+                      {formatCurrency(currentMonthData.finalEndBalance, currency)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] md:text-xs text-slate-400 uppercase" title="Opérations récurrentes actives ce mois">Cap. actuelle</div>
+                    <div className={`font-bold text-base md:text-lg flex items-center gap-1 ${savingsCapacityNow > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      <PiggyBank size={14} className="text-slate-400"/>
+                      {savingsCapacityNow > 0 ? '+' : ''}{formatCurrency(savingsCapacityNow, currency)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] md:text-xs text-slate-400 uppercase" title="Toutes opérations récurrentes lissées au mois">Cap. lissée</div>
+                    <div className={`font-bold text-base md:text-lg flex items-center gap-1 ${savingsCapacityLisse > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      <Repeat size={14} className="text-slate-400"/>
+                      {savingsCapacityLisse > 0 ? '+' : ''}{formatCurrency(savingsCapacityLisse, currency)}
+                    </div>
+                  </div>
+                  <div className="text-right md:text-left">
+                    <div className="text-[10px] md:text-xs text-slate-400 uppercase">Point Bas</div>
+                    <div className={`font-bold text-base md:text-lg flex items-center justify-end md:justify-start gap-1 ${minBalance < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                      {minBalance < 0 && <TrendingDown size={14}/>}
+                      {formatCurrency(minBalance, currency)}
+                    </div>
+                  </div>
+                </div>
+
+                <button onClick={() => setCurrency(c => c === 'EUR' ? 'XPF' : 'EUR')} className="hidden md:flex bg-white border border-slate-200 shadow-sm px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-blue-600 items-center gap-2">
+                  <Coins size={14}/> {currency === 'EUR' ? 'Passer en XPF' : 'Passer en EUR'}
+                </button>
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-auto p-4 md:p-6 lg:p-8 space-y-4 pb-24 md:pb-8">
+              {/* Onglets navigation */}
+              <div className="flex gap-1 border-b border-slate-200 -mx-4 md:-mx-6 lg:-mx-8 px-4 md:px-6 lg:px-8 overflow-x-auto">
+                {[
+                  { id: 'main', label: 'Vue principale', icon: TrendingUp },
+                  { id: 'yearly', label: 'Annuel', icon: Calendar },
+                  { id: 'savings', label: 'Épargne & placements', icon: PiggyBank },
+                  { id: 'goals', label: 'Objectifs', icon: Tag }
+                ].map(tab => {
+                  const Icon = tab.icon;
+                  const isActive = activeView === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveView(tab.id)}
+                      className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px flex items-center gap-1.5 whitespace-nowrap transition-all ${isActive ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                      <Icon size={14}/> {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Alerte point bas critique */}
+              {!criticalAlertSeen && criticalPointBas && criticalPointBas.finalEndBalance < toView(criticalThreshold) && activeView === 'main' && (
+                <CriticalAlertBanner 
+                  point={criticalPointBas} 
+                  threshold={toView(criticalThreshold)}
+                  currency={currency}
+                  onDismiss={() => setCriticalAlertSeen(true)}
+                  onAdjust={() => {
+                    setPromptDialog({
+                      title: 'Seuil d\'alerte',
+                      message: `Sous quel montant (en ${currency}) déclencher l'alerte ?`,
+                      defaultValue: String(toView(criticalThreshold)),
+                      onConfirm: (val) => {
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) {
+                          setCriticalThreshold(num / rate);
+                          showToast('Seuil mis à jour', 'success');
+                        }
+                        setPromptDialog(null);
+                      }
+                    });
+                  }}
+                />
+              )}
+
+              {/* VUE PRINCIPALE */}
+              {activeView === 'main' && (
+                <>
+                  <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+                    <div className="xl:col-span-3">
+                      <ForecastChart data={displayedForecast} isSimulation={isSimulationMode} currency={currency} />
+                    </div>
+                    {showAnalytics && operations.length > 0 && (
+                      <div className="xl:col-span-2">
+                        <CategoryPieChart operations={operations} currency={currency} />
+                      </div>
+                    )}
+                  </div>
+
+                  {operations.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <MonthSavingsCard 
+                        actual={currentMonthSavings}
+                        average={savingsCapacityLisse}
+                        currency={currency}
+                      />
+                      <TopLeaksCard leaks={top5Leaks} currency={currency} />
+                    </div>
+                  )}
+
+                  <ForecastTable 
+                    data={displayedForecast} 
+                    onAdjustment={handleAdjustment} 
+                    onSavingsAdjustment={handleSavingsAdjustment}
+                    isSimulation={isSimulationMode} 
+                    currency={currency}
+                  />
+                </>
+              )}
+
+              {/* VUE ANNUELLE */}
+              {activeView === 'yearly' && (
+                <div className="space-y-4">
+                  <YearlyView data={yearlyAggregates} currency={currency} />
+                  <YearComparisonView comparison={yearComparison} currency={currency} />
+                </div>
+              )}
+
+              {/* VUE ÉPARGNE */}
+              {activeView === 'savings' && (
+                <SavingsView 
+                  forecast={baseForecast}
+                  currency={currency}
+                  safetyMattress={safetyMattress}
+                  setSafetyMattress={setSafetyMattress}
+                  savingsCapacityLisse={savingsCapacityLisse}
+                  savingsAccounts={savingsAccounts}
+                  onAddAccount={() => { setEditingAccount(null); setIsAccountFormOpen(true); }}
+                  onEditAccount={(a) => { setEditingAccount(a); setIsAccountFormOpen(true); }}
+                  whatIfAmount={whatIfAmount}
+                  setWhatIfAmount={setWhatIfAmount}
+                  whatIfRate={whatIfRate}
+                  setWhatIfRate={setWhatIfRate}
+                  whatIfYears={whatIfYears}
+                  setWhatIfYears={setWhatIfYears}
+                />
+              )}
+
+              {/* VUE OBJECTIFS */}
+              {activeView === 'goals' && (
+                <GoalsView 
+                  goals={goals}
+                  savingsCapacityNow={savingsCapacityNow}
+                  currency={currency}
+                  onEdit={(g) => { setEditingGoal(g); setIsGoalFormOpen(true); }}
+                  onAdd={() => { setEditingGoal(null); setIsGoalFormOpen(true); }}
+                />
+              )}
+            </div>
+          </main>
+
+          {/* MODALS */}
+          {isFormOpen && (
+            <OperationForm 
+              key={editingOperation ? editingOperation.id : 'new'}
+              initialData={editingOperation || undefined} 
+              onSave={handleSaveOperation} 
+              onDelete={handleDeleteOperation} 
+              onDuplicate={handleDuplicateOperation}
+              onClose={() => { setIsFormOpen(false); setEditingOperation(null); }} 
+              currency={currency} 
+            />
+          )}
+
+          {isTrackerOpen && (
+            <MonthTrackerModal 
+              operations={operations}
+              onClose={() => setIsTrackerOpen(false)}
+              onAction={handleTrackerAction}
+              currency={currency}
+            />
+          )}
+
+          {activeTarget && (
+            <PaymentModal 
+              target={activeTarget}
+              onClose={() => setActiveTarget(null)}
+              onConfirm={handlePaymentConfirm}
+              currency={currency}
+            />
+          )}
+
+          {isAccountFormOpen && (
+            <SavingsAccountForm 
+              initialData={editingAccount}
+              onSave={handleSaveAccount}
+              onDelete={handleDeleteAccount}
+              onClose={() => { setIsAccountFormOpen(false); setEditingAccount(null); }}
+              currency={currency}
+            />
+          )}
+
+          {isGoalFormOpen && (
+            <GoalForm 
+              initialData={editingGoal}
+              onSave={handleSaveGoal}
+              onDelete={handleDeleteGoal}
+              onClose={() => { setIsGoalFormOpen(false); setEditingGoal(null); }}
+              currency={currency}
+            />
+          )}
+
+          {pendingImport && (
+            <CategoryReviewModal 
+              operations={pendingImport.operations}
+              currency={currency}
+              currentDefaultCurrency={currency}
+              onConfirm={handleConfirmImport}
+              onClose={() => setPendingImport(null)}
+            />
+          )}
+
+          {confirmDialog && (
+            <ConfirmModal 
+              {...confirmDialog}
+              onCancel={() => setConfirmDialog(null)}
+            />
+          )}
+
+          {promptDialog && (
+            <PromptModal 
+              {...promptDialog}
+              onCancel={() => setPromptDialog(null)}
+            />
+          )}
+
+          {toast && (
+            <Toast 
+              key={toast.id}
+              msg={toast.msg} 
+              type={toast.type} 
+              onClose={() => setToast(null)} 
+            />
+          )}
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
