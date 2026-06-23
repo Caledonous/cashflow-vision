@@ -1,0 +1,21 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # Tous les mercredis et dimanches à 3h00 UTC (~14h heure Nouvelle-Calédonie)
+    - cron: '0 3 * * 0,3'
+  workflow_dispatch: {}  # permet de le lancer manuellement depuis l'onglet Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase to prevent inactivity pause
+        run: |
+          curl -s -X POST \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/keep_alive" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d '{}'
+          echo "Ping envoyé à Supabase."
